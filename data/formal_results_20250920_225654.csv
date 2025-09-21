@@ -1,0 +1,2 @@
+participant_name,participant_age,participant_gender,participant_class,mode,trial_index,q1_category,q1_stimulus,q1_rating_value,q1_rating_started_at,q1_rating_confirmed_at,q1_elapsed_since_display,q1_trial_elapsed_total,q2_presented,q2_category,q2_stimulus,q2_rating_value,q2_rating_started_at,q2_rating_confirmed_at,q2_elapsed_since_display,q2_trial_elapsed_total
+男,123,女,辅导费,formal,1,moral,帮助迷路的老人找到家,6,1.8035768330446444,4.457889042038005,2.6543122089933604,4.457883917028084,True,moral,及时制止同伴欺负他人,3,7.09086512500653,12.244160292029846,5.153295167023316,12.244155167019926

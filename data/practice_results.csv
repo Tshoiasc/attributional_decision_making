@@ -1,0 +1,5 @@
+participant_name,participant_age,participant_gender,participant_class,mode,trial_index,q1_category,q1_stimulus,q1_rating_value,q1_rating_started_at,q1_rating_confirmed_at,q1_elapsed_since_display,q1_trial_elapsed_total,q2_presented,q2_category,q2_stimulus,q2_rating_value,q2_rating_started_at,q2_rating_confirmed_at,q2_elapsed_since_display,q2_trial_elapsed_total
+陈跃千纪,15,男,12,practice,1,moral,匿名捐助贫困学生,6,1.8104059170000255,6.502811916987412,4.692405999987386,6.502800750022288,True,none,"当前无新信息。请基于上一轮次行为：
+小凯匿名捐助贫困学生，
+考虑你是否更改当前评价",5,8.885946499998681,13.10046137496829,4.214514874969609,13.100450208003167
+陈跃千纪,15,男,12,practice,2,moral,为陌生人提供紧急帮助,6,14.908858208975289,17.115100458962843,2.206242249987554,4.014607958961278,True,immoral,泄露客户隐私信息,3,20.369443958974443,24.101601500005927,3.7321575410314836,11.001109000004362

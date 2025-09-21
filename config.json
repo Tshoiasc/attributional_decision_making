@@ -1,0 +1,80 @@
+{
+  "window": {
+    "width": 1920,
+    "height": 1080,
+    "title": "内在与外在驱动：决策权衡实验",
+    "fullscreen": true
+  },
+  "rating": {
+    "min": 1,
+    "max": 7,
+    "step": 1,
+    "label_low": "完全不道德",
+    "label_high": "完全道德"
+  },
+  "timing": {
+    "second_question_probability": 0.7,
+    "second_question_delay_range": [
+      1.5,
+      3.5
+    ],
+    "transition_duration": 1.8
+  },
+  "experiment": {
+    "practice_trials": 2,
+    "formal_trials": 10,
+    "export_directory": "data",
+    "practice_output": "practice_results.csv",
+    "formal_output_prefix": "formal_results"
+  },
+  "colors": {
+    "background": [
+      244,
+      246,
+      252
+    ],
+    "panel": [
+      255,
+      255,
+      255
+    ],
+    "text_primary": [
+      44,
+      47,
+      56
+    ],
+    "accent": [
+      96,
+      139,
+      210
+    ],
+    "disabled": [
+      200,
+      204,
+      210
+    ],
+    "button_text": [
+      255,
+      255,
+      255
+    ]
+  },
+  "fonts": {
+    "title_size": 64,
+    "subtitle_size": 36,
+    "body_size": 28,
+    "path": "fonts/SimHei.ttf",
+    "question_size": 28
+  },
+  "texts": {
+    "home_subtitle": [
+      "通过模拟道德情境，探究改变主意时内在思考后验与外在证据的协同机制。",
+      "请按照引导完成模拟或正式实验。"
+    ]
+  },
+  "display": {
+    "show_timer": false,
+    "show_participant_info": false
+  },
+  "pictures_dir": "pictures"
+}
