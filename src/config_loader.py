@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class ConfigError(Exception):
@@ -22,6 +22,7 @@ class Config:
         self.texts: Dict[str, Any] = {}
         self.display: Dict[str, bool] = {}
         self.font_path: Optional[str] = None
+        self.latin_square: Dict[str, Any] = {}
         self._load()
 
     @property
@@ -48,10 +49,76 @@ class Config:
             self.texts = self._raw.get("texts", {})
             self.display = self._normalize_display(self._raw.get("display", {}))
             self.font_path = self._resolve_path(self.fonts.get("path"))
+            self.latin_square = self._parse_latin_square(self._raw.get("latin_square"))
         except KeyError as exc:
             raise ConfigError(f"配置缺失必需字段: {exc}") from exc
 
         self._validate()
+
+    def _parse_latin_square(self, raw_conf: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """解析拉丁方配置"""
+        default_conf = {
+            "enabled": False,
+            "symbols": {},
+            "rules": [],
+            "independent_question": False,
+        }
+        if raw_conf is None:
+            return default_conf
+        if not isinstance(raw_conf, dict):
+            raise ConfigError("latin_square 配置必须为对象")
+
+        enabled = bool(raw_conf.get("enabled", False))
+        symbols = raw_conf.get("symbols", {})
+        if symbols is None:
+            symbols = {}
+        if not isinstance(symbols, dict):
+            raise ConfigError("latin_square.symbols 必须为对象")
+        normalized_symbols: Dict[str, str] = {}
+        for key, value in symbols.items():
+            if not isinstance(key, str) or not key:
+                raise ConfigError("latin_square.symbols 的键必须为非空字符串")
+            if len(key.strip()) != len(key):
+                raise ConfigError("latin_square.symbols 的符号不能包含首尾空格")
+            normalized_symbols[key] = str(value) if value is not None else ""
+
+        rules_raw = raw_conf.get("rules", [])
+        if rules_raw is None:
+            rules_raw = []
+        if not isinstance(rules_raw, list):
+            raise ConfigError("latin_square.rules 必须为数组")
+        rules: List[Dict[str, Any]] = []
+        for entry in rules_raw:
+            if isinstance(entry, str):
+                code = entry.strip()
+                if not code:
+                    raise ConfigError("latin_square.rules 中存在空的规则字符串")
+                rules.append({"code": code, "probability": None})
+            elif isinstance(entry, dict):
+                code = entry.get("code")
+                if not isinstance(code, str) or not code.strip():
+                    raise ConfigError("latin_square.rules 中的对象缺少有效的 code")
+                code = code.strip()
+                probability = entry.get("probability")
+                if probability is not None:
+                    try:
+                        probability = float(probability)
+                    except (TypeError, ValueError) as exc:
+                        raise ConfigError("latin_square.rules.probability 必须为数值") from exc
+                    if probability < 0:
+                        raise ConfigError("latin_square.rules.probability 不能为负数")
+                rules.append({"code": code, "probability": probability})
+            else:
+                raise ConfigError("latin_square.rules 每一项必须为字符串或对象")
+
+        independent = bool(raw_conf.get("independent_question", False))
+
+        return {
+            "enabled": enabled,
+            "symbols": normalized_symbols,
+            "rules": rules,
+            "independent_question": independent,
+        }
 
     def _normalize_colors(self, colors: Dict[str, Any]) -> Dict[str, Tuple[int, int, int]]:
         normalized: Dict[str, Tuple[int, int, int]] = {}
@@ -65,6 +132,7 @@ class Config:
         defaults = {
             "show_timer": True,
             "show_participant_info": True,
+            "show_debug": False,
         }
         normalized: Dict[str, bool] = {}
         for key, default in defaults.items():
@@ -117,8 +185,52 @@ class Config:
         if practice_trials < 0 or formal_trials <= 0:
             raise ConfigError("试次数量必须为正数")
 
-    def ensure_stimuli_capacity(self, total_questions: int) -> None:
-        """根据题目数量校验试次数量上限"""
+        latin = self.latin_square
+        if latin.get("enabled"):
+            if not latin["rules"]:
+                raise ConfigError("启用拉丁方时必须配置至少一条规则")
+            rule_length_set = {len(rule["code"]) for rule in latin["rules"]}
+            if not rule_length_set or rule_length_set == {0}:
+                raise ConfigError("拉丁方规则不能为空")
+            if len(rule_length_set) > 1:
+                raise ConfigError("所有拉丁方规则长度必须一致")
+            rule_length = rule_length_set.pop()
+            if rule_length != 2:
+                raise ConfigError("当前实验流程限定每个规则包含两个题目，请确保规则长度为 2")
+            if latin["symbols"]:
+                for symbol in latin["symbols"].keys():
+                    if len(symbol) != 1:
+                        raise ConfigError("latin_square.symbols 的键必须为单个字符")
+            for rule in latin["rules"]:
+                for ch in rule["code"]:
+                    if ch == "~":
+                        continue
+                    if latin["symbols"] and ch not in latin["symbols"]:
+                        raise ConfigError(f"拉丁方规则中使用了未定义的符号: {ch}")
+                prob = rule.get("probability")
+                if prob is not None and prob == float("inf"):
+                    raise ConfigError("拉丁方概率配置非法")
+            unique_rules = {rule["code"] for rule in latin["rules"]}
+            if len(unique_rules) > formal_trials:
+                raise ConfigError("拉丁方规则数量不能超过正式实验试次数")
+            specified = [rule["probability"] for rule in latin["rules"] if rule["probability"] is not None]
+            total_spec = sum(specified)
+            if total_spec > 1 + 1e-6:
+                raise ConfigError("拉丁方概率之和不能超过 1")
+            unspecified_count = len(latin["rules"]) - len(specified)
+            if unspecified_count > 0 and total_spec >= 1 - 1e-6:
+                raise ConfigError("存在未声明概率的规则，但已无剩余概率可分配")
+
+    def ensure_stimuli_capacity(self, stimuli_manager: Any) -> None:
+        """校验题库容量是否满足试次需求"""
+        if self.latin_square.get("enabled"):
+            if hasattr(stimuli_manager, "validate_capacity"):
+                stimuli_manager.validate_capacity()
+            else:
+                raise ConfigError("当前 StimuliManager 不支持拉丁方容量校验")
+            return
+
+        total_questions = getattr(stimuli_manager, "total_questions", 0)
         max_trials = total_questions // 2
         requested_formal = int(self.experiment.get("formal_trials", 0))
         if requested_formal > max_trials:

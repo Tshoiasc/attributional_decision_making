@@ -73,8 +73,27 @@
     ]
   },
   "display": {
-    "show_timer": false,
-    "show_participant_info": false
+    "show_timer": true,
+    "show_participant_info": true,
+    "show_debug": true
+  },
+  "latin_square": {
+    "enabled": true,
+    "independent_question": true,
+    "symbols": {
+      "P": "道德题目",
+      "N": "不道德题目",
+      "A": "中性题目",
+      "~": "空题位"
+    },
+    "rules": [
+      "PN",
+      "NP",
+      {
+        "code": "A~",
+        "probability": 0.2
+      }
+    ]
   },
   "pictures_dir": "pictures"
 }

@@ -25,6 +25,7 @@ class ExperimentScene:
         participant_info: Dict[str, str],
         scale: float,
         on_finish,
+        total_trials_override: Optional[int] = None,
     ) -> None:
         self.screen = screen
         self.config = config
@@ -41,11 +42,15 @@ class ExperimentScene:
         if not isinstance(self.display, dict):
             self.display = {"show_timer": True, "show_participant_info": True}
         rating_conf = config.rating
+        self.latin_enabled = bool(getattr(config, "latin_square", {}).get("enabled"))
+        self.show_debug = bool(self.display.get("show_debug", False))
         self.total_trials = (
             config.experiment["practice_trials"]
             if mode == "practice"
             else config.experiment["formal_trials"]
         )
+        if total_trials_override is not None:
+            self.total_trials = total_trials_override
 
         self.portrait_entries = self._load_portraits()
         if len(self.portrait_entries) < self.total_trials:
@@ -101,6 +106,13 @@ class ExperimentScene:
         self.has_real_second_question = False
         self.second_question_payload: Optional[Tuple[str, str]] = None
         self.waiting_target_time: Optional[float] = None
+        self.current_rule_code: Optional[str] = None
+        self._placeholder_repeat_text: Optional[str] = None
+        self._current_question_highlight: Optional[str] = None
+        self._current_question_segments: Tuple[Tuple[str, Tuple[int, int, int]], ...] = ()
+        self.current_symbol: Optional[str] = None
+        self.previous_symbol: Optional[str] = None
+        self._debug_lines: Tuple[str, ...] = ()
 
         self.transition_start = time.perf_counter()
         self.trial_start_time = time.perf_counter()
@@ -113,6 +125,10 @@ class ExperimentScene:
         self.previous_question_raw: Optional[str] = None
 
         self._prepare_next_trial(initial=True)
+        if self.show_debug:
+            self._build_debug_lines()
+            if self._debug_lines:
+                self.state = "debug"
 
     def _prepare_next_trial(self, initial: bool = False) -> None:
         if not initial:
@@ -154,31 +170,45 @@ class ExperimentScene:
         self.current_question_confirmed = False
         self.previous_rating_value = None
         self.previous_question_raw = None
+        self.current_rule_code = None
+        self._placeholder_repeat_text = None
+        self._current_question_highlight = None
+        self._current_question_segments = ()
+        self.current_symbol = None
+        self.previous_symbol = None
 
     def _present_first_question(self) -> None:
         text, category = self.stimuli.take_first_question()
         self._setup_question(text, category, order=1)
-        probability = self.config.timing["second_question_probability"]
+        self.current_rule_code = getattr(self.stimuli, "current_rule_code", None)
         delay_min, delay_max = self.config.timing["second_question_delay_range"]
-        show_second = random.random() < probability
-        if self.mode == "practice":
-            if self.current_trial == 1:
-                show_second = False
-            elif self.current_trial == 2:
-                show_second = True
-        payload = self.stimuli.take_second_question() if show_second else None
+        if self.latin_enabled:
+            payload = self.stimuli.take_second_question()
+        else:
+            probability = self.config.timing["second_question_probability"]
+            show_second = random.random() < probability
+            if self.mode == "practice":
+                if self.current_trial == 1:
+                    show_second = False
+                elif self.current_trial == 2:
+                    show_second = True
+            payload = self.stimuli.take_second_question() if show_second else None
         if payload:
             self.has_real_second_question = True
             self.second_question_payload = payload
+            self._placeholder_repeat_text = None
         else:
             self.has_real_second_question = False
             base_text = self.previous_question_raw or text
             subject_prefix = self.current_subject_name or ""
+            repeat_symbol = self.previous_symbol or self._category_symbol(category)
+            repeat_line = f"[{repeat_symbol}] {subject_prefix}{base_text}，"
             instructions = (
-                "当前无新信息。请基于上一轮次行为：\n"
-                f"{subject_prefix}{base_text}，\n"
+                "[~] 当前无新信息。请基于上一轮次行为：\n"
+                f"{repeat_line}\n"
                 "考虑你是否更改当前评价"
             )
+            self._placeholder_repeat_text = repeat_line
             self.second_question_payload = (instructions, "none")
         self.waiting_duration = random.uniform(delay_min, delay_max)
 
@@ -186,6 +216,7 @@ class ExperimentScene:
         self.current_question_order = order
         self.current_question_text = text
         self.current_category = category
+        self.current_symbol = self._category_symbol(category)
         self.question_start_time = time.perf_counter()
         self.slider_enabled_time = None
         self.current_question_confirmed = False
@@ -193,6 +224,7 @@ class ExperimentScene:
         self.slider.reset()
         if order == 1:
             self.previous_question_raw = text
+            self.previous_symbol = self.current_symbol
         if order == 2 and self.previous_rating_value is not None:
             self.slider.set_value(self.previous_rating_value)
         self.slider.set_enabled(True)
@@ -200,8 +232,11 @@ class ExperimentScene:
         self.slider_enabled_time = self.question_start_time
         if order == 2 and self.current_category == "none":
             self.current_question_display = text
+            self._current_question_highlight = self._placeholder_repeat_text
         else:
             self.current_question_display = self._compose_question_display(text)
+            self._current_question_highlight = None
+        self._refresh_question_segments()
 
     def _confirm_rating(self) -> None:
         if self.state != "question" or not self.slider.enabled:
@@ -230,6 +265,7 @@ class ExperimentScene:
             elapsed_since_display=elapsed,
             trial_elapsed_total=trial_elapsed,
             second_question_presented=self.has_real_second_question,
+            rule_code=self.current_rule_code if self.current_rule_code else None,
         )
 
         if self.current_question_order == 1:
@@ -250,6 +286,11 @@ class ExperimentScene:
             self.recorder.export()
             self.on_finish()
             return
+        if self.state == "debug":
+            if event.type == pygame.KEYDOWN and event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                self.state = "transition"
+                self.transition_start = time.perf_counter()
+            return
         if self.state == "completed":
             if event.type == pygame.KEYDOWN and event.key in (pygame.K_SPACE, pygame.K_RETURN):
                 self.on_finish()
@@ -259,6 +300,8 @@ class ExperimentScene:
             self.confirm_button.handle_event(event)
 
     def update(self, _dt: float) -> None:
+        if self.state == "debug":
+            return
         now = time.perf_counter()
         if self.state == "transition":
             if now - self.transition_start >= self.config.timing["transition_duration"]:
@@ -273,7 +316,9 @@ class ExperimentScene:
             self._draw_participant_info()
         if self.display.get("show_timer", True):
             self._draw_timer()
-        if self.state == "transition":
+        if self.state == "debug":
+            self._draw_debug_overlay()
+        elif self.state == "transition":
             self._draw_transition()
         elif self.state == "question":
             self._draw_question()
@@ -321,6 +366,25 @@ class ExperimentScene:
             self.colors["text_primary"],
         )
         self.screen.blit(text, text.get_rect(center=(self.screen.get_width() / 2, self.screen.get_height() / 2)))
+
+    def _draw_debug_overlay(self) -> None:
+        lines = self._debug_lines or ("未启用拉丁方规则调试信息。",)
+        title_font = self.fonts["subtitle"]
+        body_font = self.fonts["body"]
+        title = title_font.render("规则分配预览", True, self.colors["text_primary"])
+        title_rect = title.get_rect(center=(self.screen.get_width() / 2, self.screen.get_height() / 2 - int(200 * self.scale)))
+        self.screen.blit(title, title_rect)
+
+        line_gap = max(30, int(36 * self.scale))
+        start_y = title_rect.bottom + int(20 * self.scale)
+        for idx, text in enumerate(lines):
+            surface = body_font.render(text, True, self.colors["text_primary"])
+            rect = surface.get_rect(center=(self.screen.get_width() / 2, start_y + idx * line_gap))
+            self.screen.blit(surface, rect)
+
+        hint = body_font.render("按 空格 / 回车 开始实验", True, self.colors["accent"])
+        hint_rect = hint.get_rect(center=(self.screen.get_width() / 2, self.screen.get_height() - int(120 * self.scale)))
+        self.screen.blit(hint, hint_rect)
 
     def _draw_question(self) -> None:
         self._draw_question_panel()
@@ -370,8 +434,13 @@ class ExperimentScene:
         pygame.draw.rect(self.screen, self.colors["accent"], panel_rect, width=2, border_radius=16)
         if not self.current_question_display:
             return
-        wrapped = self._wrap_text(self.current_question_display, panel_rect.width - int(60 * self.scale))
         font = self.fonts.get("question", self.fonts["body"])
+        wrap_width = panel_rect.width - int(60 * self.scale)
+        segments = self._current_question_segments or self._build_question_segments(
+            self.current_question_display,
+            self._current_question_highlight,
+            wrap_width,
+        )
 
         portrait_size = int(min(panel_rect.width, panel_rect.height) * 0.4)
         portrait_rect = pygame.Rect(0, 0, portrait_size, portrait_size)
@@ -394,13 +463,13 @@ class ExperimentScene:
             name_surface = self.fonts["body"].render(self.current_subject_name, True, self.colors["text_primary"])
             name_rect = name_surface.get_rect(center=(portrait_rect.centerx, portrait_rect.bottom + int(18 * self.scale)))
             self.screen.blit(name_surface, name_rect)
-            text_start_y = name_rect.bottom + int(18 * self.scale)
+            text_start_y = name_rect.bottom + int(36 * self.scale)
         else:
             text_start_y = portrait_rect.bottom + int(36 * self.scale)
         line_height = int(font.get_linesize() * 1.3)
         text_bottom = text_start_y
-        for idx, line in enumerate(wrapped):
-            surf = font.render(line, True, self.colors["text_primary"])
+        for idx, (line, color) in enumerate(segments):
+            surf = font.render(line, True, color)
             text_rect = surf.get_rect(center=(panel_rect.centerx, text_start_y + idx * line_height))
             self.screen.blit(surf, text_rect)
             text_bottom = text_rect.bottom
@@ -443,10 +512,107 @@ class ExperimentScene:
         return tuple(lines)
 
     def _compose_question_display(self, text: str) -> str:
+        symbol = self.current_symbol or self._category_symbol(self.current_category)
+        prefix = f"[{symbol}] " if symbol else ""
         subject = self.current_subject_name
-        if subject:
-            return f"{subject}{text}"
-        return text
+        body = f"{subject}{text}" if subject else text
+        return f"{prefix}{body}"
+
+    def _category_symbol(self, category: Optional[str]) -> str:
+        if not category:
+            return "~"
+        if len(category) == 1:
+            return category
+        lowered = category.lower()
+        if lowered == "none":
+            return "~"
+        if lowered.startswith("moral"):
+            return "P"
+        if lowered.startswith("immoral"):
+            return "N"
+        if lowered.startswith("amoral") or lowered.startswith("neutral"):
+            return "A"
+        return category[:1].upper()
+
+    def _build_debug_lines(self) -> None:
+        plan: List[str] = []
+        if hasattr(self.stimuli, "get_rule_plan"):
+            plan = self.stimuli.get_rule_plan()
+        if not plan:
+            self._debug_lines = (
+                f"当前总试次：{self.total_trials}",
+                "未启用拉丁方或未生成规则序列。",
+            )
+            return
+
+        indices_by_rule: Dict[str, List[int]] = {}
+        order: List[str] = []
+        for idx, code in enumerate(plan, start=1):
+            if code not in indices_by_rule:
+                indices_by_rule[code] = []
+                order.append(code)
+            indices_by_rule[code].append(idx)
+
+        independent = getattr(self.stimuli, "is_independent_mode", lambda: True)()
+        lines: List[str] = [
+            f"总试次：{len(plan)}",
+            f"题目是否不重复：{'是' if independent else '否'}",
+        ]
+        symbol_defs = getattr(self.stimuli, "get_symbol_definitions", lambda: {})()
+        if symbol_defs:
+            lines.append("符号说明：")
+            for symbol, desc in symbol_defs.items():
+                lines.append(f"  {symbol}：{desc}")
+        weight_info = getattr(self.stimuli, "get_rule_weights", lambda: [])()
+        if weight_info:
+            lines.append("目标概率：")
+            for code, weight, specified in weight_info:
+                pct = f"{weight * 100:.1f}%"
+                if specified is not None:
+                    lines.append(f"  {code}：{pct}（显式设为 {specified:.3f}）")
+                else:
+                    lines.append(f"  {code}：{pct}（自动分配）")
+        lines.append("规则分配：")
+        for code in order:
+            positions = indices_by_rule[code]
+            trial_str = "、".join(str(pos) for pos in positions)
+            lines.append(f"  {code}：次数 {len(positions)} -> 试次 {trial_str}")
+        self._debug_lines = tuple(lines)
+
+    def _refresh_question_segments(self) -> None:
+        if not self.current_question_display:
+            self._current_question_segments = ()
+            return
+        margin_x = int(80 * self.scale)
+        panel_width = self.screen.get_width() - margin_x * 2
+        wrap_width = panel_width - int(60 * self.scale)
+        self._current_question_segments = self._build_question_segments(
+            self.current_question_display,
+            self._current_question_highlight,
+            wrap_width,
+        )
+
+    def _build_question_segments(
+        self,
+        text: str,
+        highlight: Optional[str],
+        wrap_width: int,
+    ) -> Tuple[Tuple[str, Tuple[int, int, int]], ...]:
+        segments: List[Tuple[str, Tuple[int, int, int]]] = []
+        default_color = self.colors["text_primary"]
+        highlight_color = self.colors["disabled"]
+        highlight_line = highlight.strip() if highlight else None
+        lines = text.split("\n") if "\n" in text else [text]
+        for raw_line in lines:
+            stripped = raw_line.strip()
+            color = highlight_color if highlight_line and stripped == highlight_line else default_color
+            wrapped = self._wrap_text(raw_line, wrap_width)
+            if not wrapped:
+                segments.append(("", color))
+                continue
+            for entry in wrapped:
+                segments.append((entry, color))
+        return tuple(segments)
 
     def _load_portraits(self) -> List[Dict[str, object]]:
         raw = getattr(self.config, "raw", {})

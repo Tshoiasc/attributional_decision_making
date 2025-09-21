@@ -60,12 +60,16 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        stimuli_manager = StimuliManager("stimuli.csv")
+        stimuli_manager = StimuliManager("stimuli.csv", config)
     except ValueError as exc:
         print(f"题库错误：{exc}")
         sys.exit(1)
 
-    config.ensure_stimuli_capacity(stimuli_manager.total_questions)
+    try:
+        config.ensure_stimuli_capacity(stimuli_manager)
+    except ValueError as exc:
+        print(f"题库错误：{exc}")
+        sys.exit(1)
 
     pygame.init()
 
@@ -144,7 +148,11 @@ def main() -> None:
         if participant_info is None:
             collect_participant(initial=True)
             return
-        stimuli_manager.reset_session()
+        if mode == "practice":
+            total_trials = stimuli_manager.practice_trial_count()
+        else:
+            total_trials = config.experiment["formal_trials"]
+        stimuli_manager.begin_run(mode, total_trials)
         if mode == "practice":
             export_name = config.experiment["practice_output"]
         else:
@@ -164,6 +172,7 @@ def main() -> None:
             participant_info=participant_info.copy(),
             scale=scale,
             on_finish=go_menu,
+            total_trials_override=total_trials,
         )
 
     collect_participant(initial=True)

@@ -1,5 +1,6 @@
 dist/
 build/
+data/*.csv
 __pycache__/
 *.spec
 *.pyc

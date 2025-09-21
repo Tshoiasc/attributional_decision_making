@@ -23,6 +23,7 @@ class QuestionRecord:
     elapsed_since_display: float
     trial_elapsed_total: float
     second_question_presented: bool
+    rule_code: Optional[str] = None
 
 
 class DataRecorder:
@@ -56,6 +57,7 @@ class DataRecorder:
         elapsed_since_display: float,
         trial_elapsed_total: float,
         second_question_presented: bool,
+        rule_code: Optional[str] = None,
     ) -> None:
         info = self.participant_info
         self._records.append(
@@ -75,6 +77,7 @@ class DataRecorder:
                 elapsed_since_display=elapsed_since_display,
                 trial_elapsed_total=trial_elapsed_total,
                 second_question_presented=second_question_presented,
+                rule_code=rule_code,
             )
         )
 
@@ -95,8 +98,11 @@ class DataRecorder:
                     "mode": record.mode,
                     "trial_index": record.trial_index,
                     "q2_presented": False,
+                    "rule_code": "",
                 }
             bucket = aggregated[key]
+            if record.rule_code and not bucket.get("rule_code"):
+                bucket["rule_code"] = record.rule_code
             prefix = "q1" if record.question_order == 1 else "q2"
             bucket[f"{prefix}_category"] = record.category
             bucket[f"{prefix}_stimulus"] = record.stimulus
@@ -116,6 +122,7 @@ class DataRecorder:
             "participant_class",
             "mode",
             "trial_index",
+            "rule_code",
             "q1_category",
             "q1_stimulus",
             "q1_rating_value",
