@@ -32,8 +32,8 @@ jobs:
         if (!(Test-Path "dist")) { New-Item -ItemType Directory -Path "dist" }
         if (!(Test-Path "build")) { New-Item -ItemType Directory -Path "build" }
 
-        # 构建EXE
-        pyinstaller --onefile --windowed --name "心理学实验程序" --add-data "config.json;." --add-data "stimuli.csv;." --add-data "fonts;fonts" --add-data "pictures;pictures" --add-data "data;data" main.py
+        # 构建EXE - 只打包静态资源，不打包data目录
+        pyinstaller --onefile --windowed --name "心理学实验程序" --add-data "config.json;." --add-data "stimuli.csv;." --add-data "fonts;fonts" --add-data "pictures;pictures" main.py
 
     - name: Upload EXE artifact
       uses: actions/upload-artifact@v4
