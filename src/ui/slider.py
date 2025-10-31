@@ -3,6 +3,13 @@ from typing import Tuple
 import pygame
 
 
+def _is_whole_number(value: float) -> bool:
+    try:
+        return float(value).is_integer()
+    except (TypeError, ValueError):
+        return False
+
+
 class Slider:
     """滑动条组件，支持步长限制"""
 
@@ -143,14 +150,14 @@ class Slider:
     def _get_value_format(self) -> str:
         """根据步长和值范围决定数值显示格式"""
         # 如果步长、最大值、最小值都是整数，使用g格式自动去掉小数点
-        if (self.step.is_integer() and
-            self.min_value.is_integer() and
-            self.max_value.is_integer()):
+        if (_is_whole_number(self.step) and
+            _is_whole_number(self.min_value) and
+            _is_whole_number(self.max_value)):
             return "g"
         # 否则根据步长的小数位数来显示
         else:
             # 计算步长的小数位数
-            step_str = f"{self.step:.10f}".rstrip('0').rstrip('.')
+            step_str = f"{float(self.step):.10f}".rstrip('0').rstrip('.')
             if '.' in step_str:
                 decimal_places = len(step_str.split('.')[1])
                 return f".{decimal_places}f"
