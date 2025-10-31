@@ -42,31 +42,16 @@ jobs:
       - name: Build application
         run: pyinstaller start_experiment.spec --noconfirm --clean
 
-      - name: Copy resources (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          Copy-Item -Path "config.json" -Destination "dist\PsychExperiment\" -Force
-          Copy-Item -Path "stimuli.csv" -Destination "dist\PsychExperiment\" -Force
-          if (Test-Path "dist\PsychExperiment\pictures") { Remove-Item "dist\PsychExperiment\pictures" -Recurse -Force }
-          Copy-Item -Path "pictures" -Destination "dist\PsychExperiment" -Recurse -Force
-
       - name: Package Windows artifact
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           Compress-Archive -Path "dist\PsychExperiment\*" -DestinationPath "dist\PsychExperiment-windows.zip" -Force
 
-      - name: Prepare macOS payload
+      - name: Package macOS DMG
         if: matrix.os == 'macos-14'
         run: |
-          mkdir -p dist/dmg-root
-          cp -R dist/PsychExperiment.app dist/dmg-root/
-          mkdir -p dist/dmg-root/resources
-          cp config.json dist/dmg-root/resources/config.json
-          cp stimuli.csv dist/dmg-root/resources/stimuli.csv
-          cp -R pictures dist/dmg-root/resources/pictures
-          hdiutil create -ov -fs HFS+ -volname "PsychExperiment" -srcfolder "dist/dmg-root" "dist/PsychExperiment.dmg"
+          hdiutil create -ov -fs HFS+ -volname "PsychExperiment" -srcfolder "dist/PsychExperiment.app" "dist/PsychExperiment.dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -55,11 +55,8 @@ def user_data_dir() -> str:
 
 def resource_path(*parts: str) -> str:
     """Resolve a bundled resource path."""
-    runtime_candidate = _norm_join(runtime_dir(), *parts)
-    if os.path.exists(runtime_candidate):
-        return runtime_candidate
-    bundled_candidate = _norm_join(bundle_dir(), *parts)
-    return bundled_candidate
+
+    return _norm_join(bundle_dir(), *parts)
 
 
 def resolve_output_directory(configured: str) -> Tuple[str, bool]:

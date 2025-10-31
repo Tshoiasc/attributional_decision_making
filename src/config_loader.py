@@ -2,7 +2,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.utils.paths import resolve_output_directory, resource_path, runtime_dir
+from src.utils.paths import resolve_output_directory, resource_path
 
 
 class ConfigError(Exception):
@@ -386,24 +386,10 @@ class Config:
 
 
 def load_config(path: Optional[str] = None) -> Config:
-    """便捷加载入口，优先加载运行目录下的配置供外部覆盖。"""
-
-    candidates = []
-
-    if path is None:
-        candidates.append(os.path.join(runtime_dir(), "config.json"))
-        candidates.append(resource_path("config.json"))
-    else:
-        if os.path.isabs(path):
-            candidates.append(path)
-        else:
-            candidates.append(os.path.join(runtime_dir(), path))
-            candidates.append(resource_path(path))
-
-    for candidate in candidates:
-        if candidate and os.path.exists(candidate):
-            return Config(candidate)
-
-    # 如果都不存在，让 Config 自己抛出更友好的错误
-    target = candidates[-1]
+    """便捷加载入口"""
+    target = path
+    if target is None:
+        target = resource_path("config.json")
+    elif not os.path.isabs(target):
+        target = resource_path(target)
     return Config(target)

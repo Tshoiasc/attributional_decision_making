@@ -17,9 +17,15 @@ project_root_str = str(project_root)
 datas = []
 extra_trees = []
 
-font_path = os.path.join(project_root_str, "fonts")
-if os.path.isdir(font_path):
-    extra_trees.append((font_path, "fonts"))
+for filename in ("config.json", "stimuli.csv"):
+    source = os.path.join(project_root_str, filename)
+    if os.path.exists(source):
+        datas.append((source, "."))
+
+for folder, prefix in (("fonts", "fonts"), ("pictures", "pictures")):
+    folder_path = os.path.join(project_root_str, folder)
+    if os.path.isdir(folder_path):
+        extra_trees.append((folder_path, prefix))
 
 hiddenimports = collect_submodules("pygame")
 
