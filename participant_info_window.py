@@ -7,10 +7,27 @@
 
 import json
 import os
+import subprocess
 import sys
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Dict, Optional
+
+from src.utils.paths import resource_path, runtime_file
+
+
+def launch_main_program() -> None:
+    """启动主程序，兼容开发环境与打包环境。"""
+
+    args = ["--run-main", "--skip-participant-form"]
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, *args]
+    else:
+        launcher = resource_path("start_experiment.py")
+        if not os.path.exists(launcher):
+            launcher = os.path.abspath("start_experiment.py")
+        command = [sys.executable, launcher, *args]
+    subprocess.Popen(command)
 
 
 class ParticipantInfoWindow:
@@ -41,7 +58,7 @@ class ParticipantInfoWindow:
     def load_font_config(self) -> str:
         """加载配置文件中的字体设置"""
         try:
-            with open("config.json", "r", encoding="utf-8") as f:
+            with open(resource_path("config.json"), "r", encoding="utf-8") as f:
                 config = json.load(f)
             font_path = config.get("fonts", {}).get("path", "fonts/SimHei.ttf")
             print(f"加载字体配置: {font_path}")
@@ -255,7 +272,7 @@ class ParticipantInfoWindow:
     
     def save_participant_info(self):
         """保存被试信息到临时文件"""
-        temp_file = "temp_participant_info.json"
+        temp_file = runtime_file("temp_participant_info.json")
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(self.participant_info, f, ensure_ascii=False, indent=2)
         print(f"被试信息已保存到 {temp_file}")
@@ -292,10 +309,8 @@ def main():
             
             # 启动主程序
             print("启动心理学实验主程序...")
-            import subprocess
             try:
-                # 使用非阻塞方式启动主程序
-                subprocess.Popen([sys.executable, "main.py", "--skip-participant-form"])
+                launch_main_program()
                 print("主程序已启动")
             except Exception as e:
                 print(f"启动主程序失败: {e}")

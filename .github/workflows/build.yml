@@ -1,0 +1,61 @@
+name: Build Packages
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pyinstaller:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python-version: "3.12"
+            artifact-name: psych-experiment-windows
+            artifact-path: dist/PsychExperiment-windows.zip
+          - os: macos-14
+            python-version: "3.12"
+            artifact-name: psych-experiment-macos
+            artifact-path: dist/PsychExperiment.dmg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.9.0 pyinstaller-hooks-contrib==2024.7
+
+      - name: Build application
+        run: pyinstaller start_experiment.spec --noconfirm --clean
+
+      - name: Package Windows artifact
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist\PsychExperiment\*" -DestinationPath "dist\PsychExperiment-windows.zip" -Force
+
+      - name: Package macOS DMG
+        if: matrix.os == 'macos-14'
+        run: |
+          hdiutil create -ov -fs HFS+ -volname "PsychExperiment" -srcfolder "dist/PsychExperiment.app" "dist/PsychExperiment.dmg"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-path }}
+

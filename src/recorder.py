@@ -1,7 +1,8 @@
 import csv
+import json
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -17,13 +18,14 @@ class QuestionRecord:
     question_order: int
     category: str
     stimulus: str
-    rating_value: float
-    rating_started_at: float
+    symbol: Optional[str]
+    rating_value: Optional[float]
+    rating_started_at: Optional[float]
     rating_confirmed_at: float
     elapsed_since_display: float
     trial_elapsed_total: float
-    second_question_presented: bool
     rule_code: Optional[str] = None
+    controls: Dict[str, Any] = None
 
 
 class DataRecorder:
@@ -50,16 +52,18 @@ class DataRecorder:
         trial_index: int,
         question_order: int,
         category: str,
+        symbol: Optional[str],
         stimulus: str,
-        rating_value: float,
-        rating_started_at: float,
+        rating_value: Optional[float],
+        rating_started_at: Optional[float],
         rating_confirmed_at: float,
         elapsed_since_display: float,
         trial_elapsed_total: float,
-        second_question_presented: bool,
         rule_code: Optional[str] = None,
+        controls: Optional[Dict[str, Any]] = None,
     ) -> None:
         info = self.participant_info
+        control_payload = controls.copy() if controls else {}
         self._records.append(
             QuestionRecord(
                 participant_name=info.get("name", ""),
@@ -71,13 +75,14 @@ class DataRecorder:
                 question_order=question_order,
                 category=category,
                 stimulus=stimulus,
+                symbol=symbol,
                 rating_value=rating_value,
                 rating_started_at=rating_started_at,
                 rating_confirmed_at=rating_confirmed_at,
                 elapsed_since_display=elapsed_since_display,
                 trial_elapsed_total=trial_elapsed_total,
-                second_question_presented=second_question_presented,
                 rule_code=rule_code,
+                controls=control_payload,
             )
         )
 
@@ -86,35 +91,6 @@ class DataRecorder:
         if not self._records:
             return None
         os.makedirs(os.path.dirname(self._csv_path), exist_ok=True)
-        aggregated = {}
-        for record in self._records:
-            key = (record.mode, record.trial_index)
-            if key not in aggregated:
-                aggregated[key] = {
-                    "participant_name": record.participant_name,
-                    "participant_age": record.participant_age,
-                    "participant_gender": record.participant_gender,
-                    "participant_class": record.participant_class,
-                    "mode": record.mode,
-                    "trial_index": record.trial_index,
-                    "q2_presented": False,
-                    "rule_code": "",
-                }
-            bucket = aggregated[key]
-            if record.rule_code and not bucket.get("rule_code"):
-                bucket["rule_code"] = record.rule_code
-            prefix = "q1" if record.question_order == 1 else "q2"
-            bucket[f"{prefix}_category"] = record.category
-            bucket[f"{prefix}_stimulus"] = record.stimulus
-            bucket[f"{prefix}_rating_value"] = record.rating_value
-            bucket[f"{prefix}_rating_started_at"] = record.rating_started_at
-            bucket[f"{prefix}_rating_confirmed_at"] = record.rating_confirmed_at
-            bucket[f"{prefix}_elapsed_since_display"] = record.elapsed_since_display
-            bucket[f"{prefix}_trial_elapsed_total"] = record.trial_elapsed_total
-            if record.question_order == 2:
-                bucket["q2_presented"] = record.second_question_presented
-            else:
-                bucket["q2_presented"] = record.second_question_presented
         fieldnames = [
             "participant_name",
             "participant_age",
@@ -122,28 +98,46 @@ class DataRecorder:
             "participant_class",
             "mode",
             "trial_index",
+            "question_order",
             "rule_code",
-            "q1_category",
-            "q1_stimulus",
-            "q1_rating_value",
-            "q1_rating_started_at",
-            "q1_rating_confirmed_at",
-            "q1_elapsed_since_display",
-            "q1_trial_elapsed_total",
-            "q2_presented",
-            "q2_category",
-            "q2_stimulus",
-            "q2_rating_value",
-            "q2_rating_started_at",
-            "q2_rating_confirmed_at",
-            "q2_elapsed_since_display",
-            "q2_trial_elapsed_total",
+            "symbol",
+            "category",
+            "stimulus",
+            "rating_value",
+            "rating_started_at",
+            "rating_confirmed_at",
+            "elapsed_since_display",
+            "trial_elapsed_total",
+            "controls",
         ]
+        sorted_records = sorted(
+            self._records,
+            key=lambda rec: (rec.mode, rec.trial_index, rec.question_order),
+        )
         with open(self._csv_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            for _, data in sorted(aggregated.items(), key=lambda item: (item[0][0], item[0][1])):
-                row = {name: data.get(name, "") for name in fieldnames}
+            for record in sorted_records:
+                controls = record.controls or {}
+                row = {
+                    "participant_name": record.participant_name,
+                    "participant_age": record.participant_age,
+                    "participant_gender": record.participant_gender,
+                    "participant_class": record.participant_class,
+                    "mode": record.mode,
+                    "trial_index": record.trial_index,
+                    "question_order": record.question_order,
+                    "rule_code": record.rule_code or "",
+                    "symbol": record.symbol or "",
+                    "category": record.category,
+                    "stimulus": record.stimulus,
+                    "rating_value": "" if record.rating_value is None else record.rating_value,
+                    "rating_started_at": "" if record.rating_started_at is None else record.rating_started_at,
+                    "rating_confirmed_at": record.rating_confirmed_at,
+                    "elapsed_since_display": record.elapsed_since_display,
+                    "trial_elapsed_total": record.trial_elapsed_total,
+                    "controls": json.dumps(controls, ensure_ascii=False) if controls else "",
+                }
                 writer.writerow(row)
         return self._csv_path
 

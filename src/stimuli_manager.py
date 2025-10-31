@@ -1,7 +1,21 @@
 import csv
 import random
 from collections import Counter
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
+
+
+@dataclass
+class QuestionSpec:
+    text: Optional[str]
+    symbol: str
+    category: str
+
+
+@dataclass
+class TrialPlan:
+    rule_code: Optional[str]
+    questions: List[QuestionSpec]
 
 
 class StimuliManager:
@@ -16,11 +30,11 @@ class StimuliManager:
 
         # 通用状态
         self.current_rule_code: Optional[str] = None
-        self._pending_second_symbol: Optional[str] = None
-        self._pending_second_text: Optional[str] = None
         self._session_rules: List[str] = []
-        self._session_rule_index: int = -1
-        self._preassigned_trials: List[Dict[str, Tuple[Optional[str], str]]] = []
+        self._trial_plans: List[TrialPlan] = []
+        self._current_trial_index: int = -1
+        self._current_trial_questions: List[QuestionSpec] = []
+        self._current_question_index: int = -1
 
         if self._use_latin:
             self._formal_rules: List[Dict[str, Any]] = list(self._latin_conf.get("rules", []))
@@ -92,11 +106,11 @@ class StimuliManager:
     ) -> None:
         """重置题目池，并在需要时为新的会话准备规则序列"""
         self.current_rule_code = None
-        self._pending_second_symbol = None
-        self._pending_second_text = None
         self._session_rules = []
-        self._session_rule_index = -1
-        self._preassigned_trials = []
+        self._trial_plans = []
+        self._current_trial_index = -1
+        self._current_trial_questions = []
+        self._current_question_index = -1
         self._active_rules = []
         self._active_rule_weights = []
 
@@ -128,7 +142,6 @@ class StimuliManager:
                 )
                 self._active_rules = rules
                 self._active_rule_weights = weights
-            self._session_rule_index = -1
         else:
             self._available_moral = self._moral.copy()
             self._available_immoral = self._immoral.copy()
@@ -204,60 +217,33 @@ class StimuliManager:
         if self._use_latin:
             self.reset_session(mode=mode, trial_count=trial_count)
             if self._session_rules:
-                self._prepare_preassigned_trials()
+                self._trial_plans = self._prepare_preassigned_trials()
         else:
             self.reset_session()
+            self._trial_plans = self._prepare_standard_trials(trial_count)
+        self._current_trial_index = -1
+        self._current_trial_questions = []
+        self._current_question_index = -1
 
-    def take_first_question(self) -> Tuple[str, str]:
-        if self._use_latin:
-            if not self._session_rules:
-                raise ValueError("未准备拉丁方规则序列，请先调用 begin_run")
-            self._session_rule_index += 1
-            if self._session_rule_index >= len(self._session_rules):
-                raise ValueError("当前试次数已超出预设的规则序列")
-            if not self._preassigned_trials:
-                raise ValueError("拉丁方题目尚未预分配")
-            assignment = self._preassigned_trials[self._session_rule_index]
-            first_text, first_symbol = assignment["first"]
-            if first_symbol == "~" or first_text is None:
-                raise ValueError("首个题目符号或题干无效")
-            second_text, second_symbol = assignment["second"]
-            self.current_rule_code = self._session_rules[self._session_rule_index]
-            self._pending_second_symbol = second_symbol
-            self._pending_second_text = second_text
-            return first_text, first_symbol
+    def start_trial(self) -> TrialPlan:
+        if not self._trial_plans:
+            raise ValueError("未准备试次，请先调用 begin_run")
+        self._current_trial_index += 1
+        if self._current_trial_index >= len(self._trial_plans):
+            raise ValueError("当前试次数已超出预设序列")
+        plan = self._trial_plans[self._current_trial_index]
+        self.current_rule_code = plan.rule_code
+        self._current_trial_questions = plan.questions
+        self._current_question_index = -1
+        return plan
 
-        pools = []
-        if self._available_moral:
-            pools.append("moral")
-        if self._available_immoral:
-            pools.append("immoral")
-        if not pools:
-            raise ValueError("题库已耗尽，无法继续实验")
-        category = random.choice(pools)
-        return self._take_from_category(category), category
-
-    def take_second_question(self) -> Optional[Tuple[str, str]]:
-        if self._use_latin:
-            if not self.current_rule_code:
-                raise ValueError("尚未呈现第一题，无法获取第二题")
-            symbol = self._pending_second_symbol
-            text = self._pending_second_text
-            self._pending_second_symbol = None
-            self._pending_second_text = None
-            if not symbol or symbol == "~" or text is None:
-                return None
-            return text, symbol
-
-        candidates: List[Tuple[str, str]] = []
-        if self._available_moral:
-            candidates.append(("moral", self._available_moral[-1]))
-        if self._available_immoral:
-            candidates.append(("immoral", self._available_immoral[-1]))
-        if not candidates:
+    def next_question(self) -> Optional[QuestionSpec]:
+        if not self._current_trial_questions:
+            raise ValueError("尚未开始试次，无法获取题目")
+        self._current_question_index += 1
+        if self._current_question_index >= len(self._current_trial_questions):
             return None
-        category, _ = random.choice(candidates)
-        return self._take_from_category(category), category
+        return self._current_trial_questions[self._current_question_index]
 
     # -------------------- 内部工具 --------------------
 
@@ -440,16 +426,12 @@ class StimuliManager:
             return self._formal_rules, self._formal_rule_weights
         return self._formal_rules, self._formal_rule_weights
 
-    def _prepare_preassigned_trials(self) -> None:
+    def _prepare_preassigned_trials(self) -> List[TrialPlan]:
         if not self._session_rules:
             raise ValueError("拉丁方规则序列为空，无法预分配题目")
 
-        assignments: List[Dict[str, Tuple[Optional[str], str]]] = []
         if self._independent_questions:
-            pools: Dict[str, List[str]] = {
-                symbol: self._available_symbol_items.get(symbol, [])
-                for symbol in self._available_symbol_items.keys()
-            }
+            pools: Dict[str, List[str]] = self._available_symbol_items
         else:
             base_lists: Dict[str, List[str]] = {
                 symbol: self._symbol_items.get(symbol, []).copy()
@@ -472,24 +454,75 @@ class StimuliManager:
                 raise ValueError(f"符号 {symbol} 缺乏题库支持")
             return random.choice(base)
 
+        trial_plans: List[TrialPlan] = []
         for code in self._session_rules:
-            symbols = list(code)
-            if not symbols:
+            if not code:
                 raise ValueError("拉丁方规则不能为空字符串")
-            first_symbol = symbols[0]
-            second_symbol = symbols[1] if len(symbols) > 1 else "~"
-            first_text = draw(first_symbol)
-            if first_text is None:
-                raise ValueError("首题符号不允许为空")
-            second_text = draw(second_symbol)
-            assignments.append(
-                {
-                    "first": (first_text, first_symbol),
-                    "second": (second_text, second_symbol),
-                }
-            )
+            symbols = list(code)
+            questions: List[QuestionSpec] = []
+            for idx, symbol in enumerate(symbols):
+                text = draw(symbol)
+                if idx == 0 and (symbol == "~" or text is None):
+                    raise ValueError("规则中的首个符号不允许为空")
+                category = symbol if symbol != "~" else "none"
+                question = QuestionSpec(text=text, symbol=symbol, category=category)
+                questions.append(question)
+            trial_plans.append(TrialPlan(rule_code=code, questions=questions))
+        return trial_plans
 
-        self._preassigned_trials = assignments
+    def _prepare_standard_trials(self, trial_count: int) -> List[TrialPlan]:
+        if trial_count < 0:
+            raise ValueError("试次数量必须为非负数")
+        plans: List[TrialPlan] = []
+        for _ in range(trial_count):
+            questions = self._build_standard_trial_questions()
+            plans.append(TrialPlan(rule_code=None, questions=questions))
+        return plans
+
+    def _build_standard_trial_questions(self) -> List[QuestionSpec]:
+        pools: List[str] = []
+        if self._available_moral:
+            pools.append("moral")
+        if self._available_immoral:
+            pools.append("immoral")
+        if not pools:
+            raise ValueError("题库已耗尽，无法继续实验")
+
+        first_category = random.choice(pools)
+        first_text = self._take_from_category(first_category)
+        questions: List[QuestionSpec] = [
+            QuestionSpec(text=first_text, symbol=first_category, category=first_category)
+        ]
+
+        other_category = None
+        if first_category == "moral" and self._available_immoral:
+            other_category = "immoral"
+        elif first_category == "immoral" and self._available_moral:
+            other_category = "moral"
+
+        second_candidates: List[str] = []
+        if other_category:
+            second_candidates.append(other_category)
+        if self._available_moral:
+            second_candidates.append("moral")
+        if self._available_immoral:
+            second_candidates.append("immoral")
+
+        if second_candidates:
+            second_category = random.choice(second_candidates)
+            if (second_category == "moral" and not self._available_moral) or (
+                second_category == "immoral" and not self._available_immoral
+            ):
+                second_category = None
+            if second_category:
+                second_text = self._take_from_category(second_category)
+                questions.append(
+                    QuestionSpec(text=second_text, symbol=second_category, category=second_category)
+                )
+
+        if not questions:
+            raise ValueError("未能生成有效试次")
+        return questions
 
     def get_rule_plan(self) -> List[str]:
         return self._session_rules.copy()

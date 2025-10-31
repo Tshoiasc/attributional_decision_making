@@ -2,6 +2,8 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.utils.paths import resolve_output_directory, resource_path
+
 
 class ConfigError(Exception):
     """配置加载异常"""
@@ -23,6 +25,10 @@ class Config:
         self.display: Dict[str, bool] = {}
         self.font_path: Optional[str] = None
         self.latin_square: Dict[str, Any] = {}
+        self.question_controls: Dict[str, Any] = {}
+        self._resolved_export_dir: str = ""
+        self._export_dir_fallback: bool = False
+        self._export_dir_warned: bool = False
         self._load()
 
     @property
@@ -32,6 +38,8 @@ class Config:
     def _load(self) -> None:
         if not os.path.exists(self._path):
             raise ConfigError(f"未找到配置文件: {self._path}")
+
+        self._path = os.path.abspath(self._path)
 
         with open(self._path, "r", encoding="utf-8") as f:
             try:
@@ -50,8 +58,14 @@ class Config:
             self.display = self._normalize_display(self._raw.get("display", {}))
             self.font_path = self._resolve_path(self.fonts.get("path"))
             self.latin_square = self._parse_latin_square(self._raw.get("latin_square"))
+            self.question_controls = self._parse_question_controls(self._raw.get("question_controls"))
+            export_configured = self.experiment.get("export_directory")
         except KeyError as exc:
             raise ConfigError(f"配置缺失必需字段: {exc}") from exc
+
+        export_path, fallback = resolve_output_directory(export_configured)
+        self._resolved_export_dir = export_path
+        self._export_dir_fallback = fallback
 
         self._validate()
 
@@ -165,15 +179,11 @@ class Config:
         if step <= 0:
             raise ConfigError("评分步长必须为正数")
 
-        delay_range = self.timing.get("second_question_delay_range")
+        delay_range = self.timing.get("question_delay_range")
         if not isinstance(delay_range, list) or len(delay_range) != 2:
-            raise ConfigError("第二题延迟区间配置错误")
+            raise ConfigError("题目间隔区间配置错误")
         if delay_range[0] < 0 or delay_range[1] < delay_range[0]:
-            raise ConfigError("第二题延迟区间设置不合法")
-
-        probability = self.timing.get("second_question_probability", 0)
-        if not 0 <= probability <= 1:
-            raise ConfigError("第二题出现概率必须在0到1之间")
+            raise ConfigError("题目间隔区间设置不合法")
 
         if self.font_path and not os.path.exists(self.font_path):
             raise ConfigError(f"字体文件不存在: {self.font_path}")
@@ -198,14 +208,9 @@ class Config:
                     raise ConfigError(f"启用拉丁方时必须配置至少一条 {label}")
                 if not rules:
                     return
-                length_set = {len(rule["code"]) for rule in rules}
-                if not length_set or length_set == {0}:
+                lengths = [len(rule["code"]) for rule in rules]
+                if not lengths or any(length <= 0 for length in lengths):
                     raise ConfigError(f"拉丁方 {label} 不能为空")
-                if len(length_set) > 1:
-                    raise ConfigError(f"所有拉丁方 {label} 长度必须一致")
-                length = length_set.pop()
-                if length != 2:
-                    raise ConfigError("当前实验流程限定每个规则包含两个题目，请确保规则长度为 2")
                 if latin["symbols"]:
                     for symbol in latin["symbols"].keys():
                         if len(symbol) != 1:
@@ -236,6 +241,119 @@ class Config:
             if len(unique_rules) > formal_trials:
                 raise ConfigError("拉丁方规则数量不能超过正式实验试次数")
 
+    def _parse_question_controls(self, raw_conf: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        defaults = {"show_slider": True}
+        overrides: List[Dict[str, Any]] = []
+
+        if raw_conf is None:
+            return {"defaults": defaults, "overrides": overrides}
+        if not isinstance(raw_conf, dict):
+            raise ConfigError("question_controls 必须为对象")
+
+        raw_defaults = raw_conf.get("defaults")
+        if raw_defaults is not None:
+            parsed_defaults = self._parse_control_settings(raw_defaults, "defaults")
+            defaults.update(parsed_defaults)
+
+        raw_overrides = raw_conf.get("overrides", [])
+        if raw_overrides is None:
+            raw_overrides = []
+        if not isinstance(raw_overrides, list):
+            raise ConfigError("question_controls.overrides 必须为数组")
+
+        for idx, entry in enumerate(raw_overrides, start=1):
+            if not isinstance(entry, dict):
+                raise ConfigError("question_controls.overrides 中的每项必须为对象")
+            match_raw = entry.get("match", {})
+            settings_raw = entry.get("settings", {})
+            match = self._parse_control_match(match_raw, idx)
+            settings = self._parse_control_settings(settings_raw, f"overrides[{idx}]")
+            overrides.append({"match": match, "settings": settings})
+
+        defaults.setdefault("show_slider", True)
+        return {"defaults": defaults, "overrides": overrides}
+
+    def _parse_control_settings(self, raw_settings: Any, label: str) -> Dict[str, Any]:
+        if raw_settings is None:
+            return {}
+        if not isinstance(raw_settings, dict):
+            raise ConfigError(f"question_controls.{label} 必须为对象")
+        settings: Dict[str, Any] = {}
+        for key, value in raw_settings.items():
+            if key == "show_slider":
+                settings[key] = bool(value)
+            else:
+                raise ConfigError(f"question_controls.{label} 包含未知设置: {key}")
+        return settings
+
+    def _parse_control_match(self, raw_match: Any, index: int) -> Dict[str, Any]:
+        if raw_match is None:
+            return {}
+        if not isinstance(raw_match, dict):
+            raise ConfigError(f"question_controls.overrides[{index}].match 必须为对象")
+        match: Dict[str, Any] = {}
+        for key, value in raw_match.items():
+            if key == "symbol":
+                if not isinstance(value, str):
+                    raise ConfigError("question_controls 匹配字段 symbol 必须为字符串")
+                match[key] = value
+            elif key in {"order", "question_order"}:
+                try:
+                    number = int(value)
+                except (TypeError, ValueError) as exc:
+                    raise ConfigError("question_controls 匹配字段 order 必须为正整数") from exc
+                if number <= 0:
+                    raise ConfigError("question_controls 匹配字段 order 必须为正整数")
+                match["order"] = number
+            elif key == "mode":
+                if not isinstance(value, str):
+                    raise ConfigError("question_controls 匹配字段 mode 必须为字符串")
+                match[key] = value
+            elif key == "rule_code":
+                if not isinstance(value, str):
+                    raise ConfigError("question_controls 匹配字段 rule_code 必须为字符串")
+                match[key] = value
+            else:
+                raise ConfigError(f"question_controls.overrides[{index}] 包含未知匹配字段: {key}")
+        return match
+
+    def resolve_question_settings(
+        self,
+        *,
+        mode: Optional[str] = None,
+        order: Optional[int] = None,
+        symbol: Optional[str] = None,
+        rule_code: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        controls = self.question_controls or {"defaults": {"show_slider": True}, "overrides": []}
+        settings = dict(controls.get("defaults", {}))
+        for override in controls.get("overrides", []):
+            if self._question_control_matches(override.get("match", {}), mode, order, symbol, rule_code):
+                settings.update(override.get("settings", {}))
+        if "show_slider" not in settings:
+            settings["show_slider"] = True
+        return settings
+
+    def _question_control_matches(
+        self,
+        match: Dict[str, Any],
+        mode: Optional[str],
+        order: Optional[int],
+        symbol: Optional[str],
+        rule_code: Optional[str],
+    ) -> bool:
+        if not match:
+            return True
+        if "mode" in match and match["mode"] != mode:
+            return False
+        if "symbol" in match and match["symbol"] != symbol:
+            return False
+        if "order" in match and match["order"] != order:
+            return False
+        if "rule_code" in match and match["rule_code"] != rule_code:
+            return False
+        return True
+
     def ensure_stimuli_capacity(self, stimuli_manager: Any) -> None:
         """校验题库容量是否满足试次需求"""
         if self.latin_square.get("enabled"):
@@ -259,11 +377,19 @@ class Config:
             )
 
     def export_path(self, filename: str) -> str:
-        directory = self.experiment["export_directory"]
+        directory = self._resolved_export_dir
         os.makedirs(directory, exist_ok=True)
+        if self._export_dir_fallback and not self._export_dir_warned:
+            print(f"提示：结果导出目录已调整为 {directory}（原路径不可写）")
+            self._export_dir_warned = True
         return os.path.join(directory, filename)
 
 
-def load_config(path: str = "config.json") -> Config:
+def load_config(path: Optional[str] = None) -> Config:
     """便捷加载入口"""
-    return Config(path)
+    target = path
+    if target is None:
+        target = resource_path("config.json")
+    elif not os.path.isabs(target):
+        target = resource_path(target)
+    return Config(target)

@@ -1,10 +1,45 @@
-dist/
-build/
-data/*.csv
+# Python cache
 __pycache__/
-*.spec
-*.pyc
-*.pyo
-*.pyd
-*.pyw
-*.pyz
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.eggs/
+*.wheel/
+
+# PyInstaller outputs
+*.spec.bak
+*.manifest
+
+# Runtime data and logs
+data/
+!data/.gitkeep
+temp_participant_info.json
+*.log
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+vscode-diagnostics.json
+
+# Archives and installers
+*.zip
+*.7z
+*.tar
+*.gz
+*.bz2
+*.xz
+*.dmg
+*.exe
+*.msi

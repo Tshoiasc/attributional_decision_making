@@ -1,6 +1,0 @@
-participant_name,participant_age,participant_gender,participant_class,mode,trial_index,rule_code,q1_category,q1_stimulus,q1_rating_value,q1_rating_started_at,q1_rating_confirmed_at,q1_elapsed_since_display,q1_trial_elapsed_total,q2_presented,q2_category,q2_stimulus,q2_rating_value,q2_rating_started_at,q2_rating_confirmed_at,q2_elapsed_since_display,q2_trial_elapsed_total
-1,1,男,2,practice,1,PN,P,照顾生病的邻居孩子,6,7.541659374999654,10.1777702090003,2.6361108340006467,10.177766583999983,True,N,恶意损坏公共设施,3,12.982663124999817,16.29486045900012,3.3121973340003024,16.294856833999802
-1,1,男,2,practice,2,NP,N,故意隐瞒安全隐患,6,18.097827792000317,20.00274200000058,1.904914208000264,3.707853290999992,True,P,组织社区环保活动,6,22.725373834000493,25.07271879200016,2.347344957999667,8.777830082999571
-1,1,男,2,practice,3,A~,A,中性10,4.0,26.88891158399929,27.552431542000704,0.6635199580014159,2.4796822919997794,True,none,"[~] 当前无新信息。请基于上一轮次行为：
-[A] 小朱中性10，
-考虑你是否更改当前评价",6,29.680341499999486,35.62960587499947,5.949264374999984,10.556856624998545

@@ -17,8 +17,7 @@
     "label_high": "完全道德"
   },
   "timing": {
-    "second_question_probability": 0.7,
-    "second_question_delay_range": [
+    "question_delay_range": [
       1.5,
       3.5
     ],
@@ -26,7 +25,7 @@
   },
   "experiment": {
     "practice_trials": 2,
-    "formal_trials": 16,
+    "formal_trials": 5,
     "export_directory": "data",
     "practice_output": "practice_results.csv",
     "formal_output_prefix": "formal_results"
@@ -93,18 +92,30 @@
       "~": "空题位"
     },
     "rules": [
-      "PP",
-      "PN",
-      "PA",
-      "P~",
-      "NP",
-      "NN",
-      "NA",
-      "N~"
+      "PNAP",
+      "PNP~",
+      "PNAN",
+      "PN~A",
+      "NPAP"
     ],
     "stimuli_rules": [
-      "PN",
-      "P~"
+      "PNAP",
+      "PNP~"
+    ]
+  },
+  "question_controls": {
+    "defaults": {
+      "show_slider": true
+    },
+    "overrides": [
+      {
+        "match": {
+          "order": 3
+        },
+        "settings": {
+          "show_slider": false
+        }
+      }
     ]
   },
   "pictures_dir": "pictures"

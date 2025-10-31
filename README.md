@@ -46,9 +46,9 @@ python main.py
 
 - 程序启动时自动读取当前屏幕分辨率并按比例缩放字体、组件布局（默认设计尺寸来自 `window.width`/`height`）。
 - `rating`：评分上下限、步长以及两端提示语
-- `timing.second_question_probability`：第二题呈现概率
-- `timing.second_question_delay_range`：第二题随机延迟范围（单位：秒）
+- `timing.question_delay_range`：题目之间的随机间隔范围（单位：秒，对所有题目生效）
 - `timing.transition_duration`：试次之间的过渡时长
+- `question_controls.defaults` / `question_controls.overrides`：针对不同题目条件控制评分条等界面元素是否显示
 - `texts.home_subtitle`：首页副标题文案，可配置多行
 - `display.show_timer` / `display.show_participant_info`：右上角计时与左上角被试信息是否展示
 - `pictures_dir`：画像资源所在目录，程序会随机抽取其中的图片作为角色
@@ -71,9 +71,13 @@ python main.py
 - `participant_name` / `participant_age` / `participant_gender` / `participant_class`：被试基础信息
 - `mode`：运行模式（practice/formal）
 - `trial_index`：试次序号
-- `q1_category` / `q1_stimulus` / `q1_rating_value` 等：第一题类别、文本、评分及时间轴字段（`_rating_started_at`、`_rating_confirmed_at`、`_elapsed_since_display`、`_trial_elapsed_total`）
-- `q2_presented`：是否呈现第二题
-- `q2_category` / `q2_stimulus` / `q2_rating_value` 等：第二题对应字段，若未呈现则为空
+- `question_order`：当前题目在试次中的顺序（从 1 开始）
+- `rule_code`：拉丁方规则编码（若启用）
+- `symbol`：题目符号（如 P/N/~/moral/immoral）
+- `category`：题目所属类别
+- `stimulus`：题干原文
+- `rating_value` / `rating_started_at` / `rating_confirmed_at` / `elapsed_since_display` / `trial_elapsed_total`：评分结果与时间轴信息，若题目未展示评分条则评分字段为空
+- `controls`：题目呈现时应用的控制参数（JSON 字符串），便于追溯界面配置
 
 ## 常见调整建议
 
@@ -87,5 +91,41 @@ python main.py
 - 程序默认 60 FPS，如需调整请修改 `main.py` 中的 `clock.tick(60)`
 - 为保证心理学实验的刺激独立性，请确保题目文本描述明确且彼此无重复语义
 - 正式实验前建议使用「模拟实验」流程验证设备与配置
+- 程序会在启动时根据屏幕分辨率缩放字体和布局，确保在 2880×1800 等高分辨率设备上保持良好显示。画像需命名为人物名字，例如 `小丁.png`，系统会在题干前自动加上 `{小丁}`。
 
-程序会在启动时根据屏幕分辨率缩放字体和布局，确保在 2880×1800 等高分辨率设备上保持良好显示。画像需命名为人物名字，例如 `小丁.png`，系统会在题干前自动加上 `{小丁}`。
+## 打包与发布
+
+### 本地打包
+
+1. 安装依赖：
+
+   ```bash
+   python -m pip install --upgrade pip
+   pip install -r requirements.txt
+   pip install pyinstaller==6.9.0 pyinstaller-hooks-contrib==2024.7
+   ```
+
+2. 运行 PyInstaller：
+
+   ```bash
+   pyinstaller start_experiment.spec --noconfirm --clean
+   ```
+
+   - Windows：生成的可执行文件位于 `dist/PsychExperiment/PsychExperiment.exe`，可以进一步压缩成 ZIP。
+   - macOS：生成 `dist/PsychExperiment.app`，可通过 `hdiutil create -ov -fs HFS+ -volname PsychExperiment -srcfolder dist/PsychExperiment.app dist/PsychExperiment.dmg` 制作 DMG。
+
+> **提示**：PyInstaller 需要在目标平台上构建（Windows 打包 Windows，macOS 打包 macOS）。
+
+### GitHub Actions 自动构建
+
+仓库新增 `.github/workflows/build.yml`，在 `main` 分支 Push、PR 或手动触发时，会在 Windows 与 macOS 上运行打包流程，并上传对应的 ZIP/DMG 构建产物。
+
+## 资源与数据存放策略
+
+- `config.json`、`stimuli.csv`、`fonts/`、`pictures/` 会随可执行文件一起打包，在运行时自动定位。
+- 结果文件默认写入配置中的 `data/` 目录；若该目录不可写（例如 macOS 应用放在 `/Applications` 中），程序会自动降级到用户目录：
+  - Windows：`%APPDATA%/PsychExperiment/data`
+  - macOS：`~/Library/Application Support/PsychExperiment/data`
+  - Linux：`~/.local/share/PsychExperiment/data`
+- `data/` 下的内容只是运行结果，不建议提交到版本库；仓库中保留了一个空的 `.gitkeep` 以维持目录结构。
+- 如果需要将资源放在外置目录，可在 `config.json` 中将相关路径改为绝对路径，程序会按新的路径加载。

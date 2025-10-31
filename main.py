@@ -15,6 +15,7 @@ from src.scenes.experiment import ExperimentScene
 from src.scenes.main_menu import MainMenuScene
 from src.scenes.participant_form import ParticipantFormScene
 from src.stimuli_manager import StimuliManager
+from src.utils.paths import resource_path, runtime_file
 
 
 def create_fonts(config, scale: float) -> Dict[str, pygame.font.Font]:
@@ -65,7 +66,7 @@ def sanitize_for_filename(text: str) -> str:
 
 def load_participant_info_from_file() -> Optional[Dict[str, str]]:
     """从临时文件加载被试信息"""
-    temp_file = "temp_participant_info.json"
+    temp_file = runtime_file("temp_participant_info.json")
     if os.path.exists(temp_file):
         try:
             with open(temp_file, "r", encoding="utf-8") as f:
@@ -90,7 +91,7 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        stimuli_manager = StimuliManager("stimuli.csv", config)
+        stimuli_manager = StimuliManager(resource_path("stimuli.csv"), config)
     except ValueError as exc:
         print(f"题库错误：{exc}")
         sys.exit(1)
