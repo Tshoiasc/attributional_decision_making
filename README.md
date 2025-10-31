@@ -122,7 +122,9 @@ python main.py
 
 ## 资源与数据存放策略
 
-- `config.json`、`stimuli.csv`、`fonts/`、`pictures/` 会随可执行文件一起打包，在运行时自动定位。
+- `config.json`、`stimuli.csv`、`pictures/` 等资源默认与可执行文件放在同级目录；
+- 运行时始终优先读取同级目录的配置与资源，若不存在再回退到内置默认值；
+- 可直接修改同级目录的 `config.json`、`stimuli.csv` 或替换 `pictures/` 内容，无需重新打包；
 - 结果文件默认写入配置中的 `data/` 目录；若该目录不可写（例如 macOS 应用放在 `/Applications` 中），程序会自动降级到用户目录：
   - Windows：`%APPDATA%/PsychExperiment/data`
   - macOS：`~/Library/Application Support/PsychExperiment/data`
