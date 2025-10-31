@@ -42,6 +42,17 @@ class ExperimentScene:
         if not isinstance(self.display, dict):
             self.display = {"show_timer": True, "show_participant_info": True}
         self.texts = getattr(config, "texts", {})
+        self.placeholder_template_default: Optional[str] = self.texts.get("placeholder_template")
+        self.placeholder_highlight_template_default: Optional[str] = self.texts.get("placeholder_highlight_template")
+        self.placeholder_missing_default: str = self.texts.get("placeholder_missing_text", "上一题内容缺失")
+        self.placeholder_intro_default: str = self.texts.get(
+            "placeholder_intro_text",
+            "当前无新信息。请基于上一轮次行为：",
+        )
+        self.placeholder_action_default: str = self.texts.get(
+            "placeholder_action_text",
+            "请复核并给出评分。",
+        )
         rating_conf = config.rating
         self.latin_enabled = bool(getattr(config, "latin_square", {}).get("enabled"))
         self.show_debug = bool(self.display.get("show_debug", False))
@@ -65,6 +76,8 @@ class ExperimentScene:
         self.current_subject_name: str = ""
         self._current_portrait_scaled: Optional[pygame.Surface] = None
         self.current_question_display: Optional[str] = None
+        self.current_caption_template: Optional[str] = None
+        self.current_hint_template: Optional[str] = None
 
         slider_length = int(screen.get_width() * 0.65)
         slider_x = int((screen.get_width() - slider_length) / 2)
@@ -164,6 +177,12 @@ class ExperimentScene:
         )
         self._current_portrait_scaled = None
         self.current_question_display = None
+        self.current_question_controls = {}
+        self.current_caption_template = None
+        self.current_hint_template = None
+        self.current_question_controls = {}
+        self.current_caption_template = None
+        self.current_hint_template = None
 
         try:
             plan = self.stimuli.start_trial()
@@ -199,7 +218,6 @@ class ExperimentScene:
         self._current_question_segments = ()
         self.current_symbol = None
         self.previous_symbol = None
-        self.current_question_controls = {}
         self.slider_visible = True
 
     def _present_next_question(self) -> None:
@@ -224,6 +242,15 @@ class ExperimentScene:
             rule_code=self.current_rule_code,
         )
         self.current_question_controls = controls
+        self.current_caption_template = controls.get("caption_template")
+        self.current_hint_template = controls.get("hint_template")
+        question_template = controls.get("question_template")
+        show_subject_name = bool(controls.get("show_subject_name", True))
+        show_symbol_prefix_setting = controls.get("show_symbol_prefix")
+        if show_symbol_prefix_setting is None:
+            show_symbol_prefix = None
+        else:
+            show_symbol_prefix = bool(show_symbol_prefix_setting)
         show_slider = bool(controls.get("show_slider", True))
 
         is_placeholder = symbol == "~" or spec.text is None or category == "none"
@@ -232,13 +259,40 @@ class ExperimentScene:
         raw_text = spec.text
 
         if is_placeholder:
-            display_text, highlight = self._build_placeholder_display()
+            placeholder_template = controls.get("placeholder_template")
+            placeholder_highlight_template = controls.get("placeholder_highlight_template")
+            if placeholder_template is None:
+                placeholder_template = self.placeholder_template_default
+            if placeholder_highlight_template is None:
+                placeholder_highlight_template = self.placeholder_highlight_template_default
+            display_text, highlight = self._build_placeholder_display(
+                placeholder_template,
+                placeholder_highlight_template,
+            )
             raw_text = display_text
             category = "none"
             symbol = "~"
             self._placeholder_repeat_text = highlight
         else:
-            display_text = self._compose_question_display(spec.text or "", symbol=symbol)
+            question_body_text = spec.text or ""
+            if question_template:
+                display_text = self._format_template(
+                    question_template,
+                    {
+                        "question_text": question_body_text,
+                        "raw_question_text": question_body_text,
+                        "question_symbol": symbol or "",
+                    },
+                )
+                if not display_text.strip():
+                    display_text = question_body_text
+            else:
+                display_text = self._compose_question_display(
+                    question_body_text,
+                    symbol=symbol,
+                    include_subject=show_subject_name,
+                    include_symbol=show_symbol_prefix,
+                )
             self._placeholder_repeat_text = None
 
         self._setup_question(
@@ -342,13 +396,17 @@ class ExperimentScene:
         else:
             self._prepare_next_trial()
 
-    def _build_placeholder_display(self) -> Tuple[str, str]:
+    def _build_placeholder_display(
+        self,
+        template: Optional[str],
+        highlight_template: Optional[str],
+    ) -> Tuple[str, Optional[str]]:
         base_text = self.previous_question_raw or ""
         subject_prefix = self.current_subject_name or ""
         repeat_symbol = self.previous_symbol or "~"
         base_line = f"{subject_prefix}{base_text}".strip()
         if not base_line:
-            base_line = "上一题内容缺失"
+            base_line = self.placeholder_missing_default
         if self.show_symbols:
             repeat_line = f"[{repeat_symbol}] {base_line}".strip()
             prefix = "[~] "
@@ -356,11 +414,29 @@ class ExperimentScene:
             repeat_line = base_line
             prefix = ""
         instructions = (
-            f"{prefix}当前无新信息。请基于上一轮次行为：\n"
+            f"{prefix}{self.placeholder_intro_default}\n"
             f"{repeat_line}\n"
-            "考虑你是否更改当前评价"
+            f"{self.placeholder_action_default}"
         )
-        return instructions, repeat_line
+
+        extra_context = {
+            "previous_text": base_text,
+            "previous_symbol": repeat_symbol,
+            "repeat_line": repeat_line,
+            "placeholder_prefix": prefix.strip(),
+        }
+
+        if template:
+            formatted = self._format_template(template, extra_context)
+            if formatted.strip():
+                instructions = formatted
+
+        highlight: Optional[str] = repeat_line if repeat_line else None
+        if highlight_template is not None:
+            formatted_highlight = self._format_template(highlight_template, extra_context).strip()
+            highlight = formatted_highlight or None
+
+        return instructions, highlight
 
     def handle_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -587,11 +663,11 @@ class ExperimentScene:
             text_bottom = text_rect.bottom
 
         info_font = self.fonts["body"]
-        question_caption_template = self.texts.get("question_caption", "第 {trial} 次 - 题目 {question_order}")
-        caption_text = question_caption_template.format(
-            trial=self.current_trial,
-            question_order=self.current_question_order
+        question_caption_template = (
+            self.current_caption_template
+            or self.texts.get("question_caption", "第 {trial} 次 - 题目 {question_order}")
         )
+        caption_text = self._format_template(question_caption_template)
         caption = info_font.render(
             caption_text,
             True,
@@ -602,11 +678,19 @@ class ExperimentScene:
         caption_y = max(min_caption_y, min(max_caption_y, panel_rect.bottom - int(80 * self.scale)))
         caption_rect = caption.get_rect(center=(panel_rect.centerx, caption_y))
         self.screen.blit(caption, caption_rect)
-        if self.current_question_order == 1 and self.mode == "practice":
-            hint = info_font.render("完成评分后点击确认，准备进行第二次评分。", True, self.colors["text_primary"])
-            hint_y = min(panel_rect.bottom - int(20 * self.scale), caption_rect.bottom + int(30 * self.scale))
-            hint_rect = hint.get_rect(center=(panel_rect.centerx, hint_y))
-            self.screen.blit(hint, hint_rect)
+        hint_template = self.current_hint_template
+        if not hint_template and self.current_question_order == 1 and self.mode == "practice":
+            hint_template = self.texts.get(
+                "question_hint_practice_first",
+                "完成评分后点击确认，准备进行第二次评分。",
+            )
+        if hint_template:
+            hint_text = self._format_template(str(hint_template))
+            if hint_text.strip():
+                hint = info_font.render(hint_text, True, self.colors["text_primary"])
+                hint_y = min(panel_rect.bottom - int(20 * self.scale), caption_rect.bottom + int(30 * self.scale))
+                hint_rect = hint.get_rect(center=(panel_rect.centerx, hint_y))
+                self.screen.blit(hint, hint_rect)
 
     def _wrap_text(self, text: str, max_width: int) -> Tuple[str, ...]:
         font = self.fonts.get("question", self.fonts["body"])
@@ -628,12 +712,62 @@ class ExperimentScene:
             lines.append(buffer)
         return tuple(lines)
 
-    def _compose_question_display(self, text: str, symbol: Optional[str] = None) -> str:
+    def _format_template(self, template: str, extra: Optional[Dict[str, str]] = None) -> str:
+        if not template:
+            return ""
+
+        subject_name = self.current_subject_name or ""
+        participant_name = self.participant_info.get("name", "") if isinstance(self.participant_info, dict) else ""
+        context = {
+            "trial": self.current_trial,
+            "total_trials": self.total_trials,
+            "question_order": self.current_question_order,
+            "next_question_order": self.current_question_order + 1,
+            "mode": self.mode,
+            "mode_label": "模拟" if self.mode == "practice" else "正式",
+            "symbol": self.current_symbol or "",
+            "category": self.current_category or "",
+            "subject": subject_name,
+            "subject_name": subject_name,
+            "actor": subject_name,
+            "participant": participant_name,
+            "participant_name": participant_name,
+            "question_text": self.current_question_text or "",
+            "rule_code": self.current_rule_code or "",
+            "last_symbol": self.previous_symbol or "",
+            "last_question_text": self.previous_question_raw or "",
+        }
+        if extra:
+            context.update(extra)
+
+        class _SafeDict(dict):
+            def __missing__(self, key):  # type: ignore[override]
+                return "{" + key + "}"
+
+        try:
+            return str(template).format_map(_SafeDict(context))
+        except Exception:
+            return str(template)
+
+    def _compose_question_display(
+        self,
+        text: str,
+        symbol: Optional[str] = None,
+        *,
+        include_subject: bool = True,
+        include_symbol: Optional[bool] = None,
+    ) -> str:
         actual_symbol = symbol or self.current_symbol or self._category_symbol(self.current_category)
-        prefix = f"[{actual_symbol}] " if actual_symbol and self.show_symbols else ""
-        subject = self.current_subject_name
-        body = f"{subject}{text}" if subject else text
-        return f"{prefix}{body}"
+        use_symbol = self.show_symbols if include_symbol is None else bool(include_symbol)
+        prefix = f"[{actual_symbol}] " if actual_symbol and use_symbol else ""
+        subject = self.current_subject_name if include_subject else ""
+        if subject and text:
+            body = f"{subject}{text}"
+        elif subject:
+            body = subject
+        else:
+            body = text
+        return f"{prefix}{body}".strip()
 
     def _category_symbol(self, category: Optional[str]) -> str:
         if not category:

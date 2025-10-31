@@ -16,18 +16,43 @@ from typing import Dict, Optional
 from src.utils.paths import resource_path, runtime_file
 
 
-def launch_main_program() -> None:
-    """启动主程序，兼容开发环境与打包环境。"""
+def launch_main_program(participant_info: Optional[Dict[str, str]] = None) -> None:
+    """启动主程序；在同一进程中运行，确保被试信息文件可重复使用。"""
 
     args = ["--run-main", "--skip-participant-form"]
+
+    def ensure_temp_file() -> None:
+        if participant_info is None:
+            return
+        temp_file = runtime_file("temp_participant_info.json")
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(participant_info, f, ensure_ascii=False, indent=2)
+        print(f"已准备被试信息文件: {temp_file}")
+
+    ensure_temp_file()
+
+    main_module = sys.modules.get("__main__")
+    if main_module is not None and hasattr(main_module, "run_main_entry"):
+        try:
+            main_module.run_main_entry()
+            return
+        except Exception as exc:
+            print(f"启动主程序失败：{exc}")
+            ensure_temp_file()
+            raise
+
     if getattr(sys, "frozen", False):
         command = [sys.executable, *args]
+        cwd = os.path.dirname(sys.executable)
     else:
         launcher = resource_path("start_experiment.py")
         if not os.path.exists(launcher):
             launcher = os.path.abspath("start_experiment.py")
         command = [sys.executable, launcher, *args]
-    subprocess.Popen(command)
+        cwd = os.path.dirname(launcher)
+
+    ensure_temp_file()
+    subprocess.Popen(command, cwd=cwd)
 
 
 class ParticipantInfoWindow:
@@ -310,7 +335,7 @@ def main():
             # 启动主程序
             print("启动心理学实验主程序...")
             try:
-                launch_main_program()
+                launch_main_program(participant_info)
                 print("主程序已启动")
             except Exception as e:
                 print(f"启动主程序失败: {e}")

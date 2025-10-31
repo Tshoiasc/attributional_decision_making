@@ -282,6 +282,22 @@ class Config:
         for key, value in raw_settings.items():
             if key == "show_slider":
                 settings[key] = bool(value)
+            elif key in {"show_subject_name", "show_symbol_prefix"}:
+                if value is None:
+                    continue
+                settings[key] = bool(value)
+            elif key in {
+                "caption_template",
+                "hint_template",
+                "placeholder_template",
+                "placeholder_highlight_template",
+                "question_template",
+            }:
+                if value is None:
+                    continue
+                if not isinstance(value, str):
+                    raise ConfigError(f"question_controls.{label}.{key} 必须为字符串")
+                settings[key] = value
             else:
                 raise ConfigError(f"question_controls.{label} 包含未知设置: {key}")
         return settings

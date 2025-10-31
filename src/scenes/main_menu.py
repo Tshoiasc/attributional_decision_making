@@ -55,7 +55,8 @@ class MainMenuScene:
         title_font = self.fonts["title"]
         body_font = self.fonts["body"]
 
-        title = title_font.render("内在思考与外在证据：决策驱动实验", True, colors["text_primary"])
+        title_text = self.config.get("texts", {}).get("home_title", "内在思考与外在证据：决策驱动实验")
+        title = title_font.render(title_text, True, colors["text_primary"])
         title_rect = title.get_rect(center=(self.screen.get_width() / 2, self.screen.get_height() * 0.25))
         self.screen.blit(title, title_rect)
 
