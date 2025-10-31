@@ -2,6 +2,7 @@
 
 import os
 import sys
+from pathlib import Path
 
 from PyInstaller.building.build_main import COLLECT
 from PyInstaller.building.datastruct import Tree
@@ -9,25 +10,28 @@ from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
 
-project_root = os.path.abspath(os.path.dirname(__file__))
+spec_path = Path(globals().get("SPEC", Path.cwd())).resolve()
+project_root = spec_path.parent
+project_root_str = str(project_root)
 
 datas = []
+extra_trees = []
 
 for filename in ("config.json", "stimuli.csv"):
-    source = os.path.join(project_root, filename)
+    source = os.path.join(project_root_str, filename)
     if os.path.exists(source):
         datas.append((source, "."))
 
 for folder, prefix in (("fonts", "fonts"), ("pictures", "pictures")):
-    folder_path = os.path.join(project_root, folder)
+    folder_path = os.path.join(project_root_str, folder)
     if os.path.isdir(folder_path):
-        datas.append(Tree(folder_path, prefix=prefix))
+        extra_trees.append((folder_path, prefix))
 
 hiddenimports = collect_submodules("pygame")
 
 a = Analysis(
-    [os.path.join(project_root, "start_experiment.py")],
-    pathex=[project_root],
+    [os.path.join(project_root_str, "start_experiment.py")],
+    pathex=[project_root_str],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
@@ -40,6 +44,9 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+for folder_path, prefix in extra_trees:
+    a.datas += Tree(folder_path, prefix=prefix)
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

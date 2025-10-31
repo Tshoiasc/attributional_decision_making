@@ -36,29 +36,16 @@ def run_launcher() -> None:
     print("=" * 50)
 
     try:
-        if not getattr(sys, "frozen", False):
-            main_path = resource_path("main.py")
-            if not os.path.exists(main_path):
-                main_path = os.path.abspath("main.py")
-            if not os.path.exists(main_path):
-                print("错误：未找到主程序文件 main.py")
-                input("按任意键退出...")
-                return
-
-            participant_path = resource_path("participant_info_window.py")
-            if not os.path.exists(participant_path):
-                participant_path = os.path.abspath("participant_info_window.py")
-            if not os.path.exists(participant_path):
-                print("错误：未找到被试信息录入窗口 participant_info_window.py")
-                input("按任意键退出...")
-                return
-
         print("正在启动被试信息录入窗口...")
 
         from participant_info_window import main as run_participant_window
 
         run_participant_window()
 
+    except ImportError as exc:
+        print(f"错误：无法导入 participant_info_window 模块：{exc}")
+        if not getattr(sys, "frozen", False):
+            input("按任意键退出...")
     except KeyboardInterrupt:
         print("\n用户中断了程序执行")
     except Exception as exc:
