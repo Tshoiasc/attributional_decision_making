@@ -2,7 +2,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.utils.paths import resolve_output_directory, resource_path
+from src.utils.paths import resolve_output_directory, resource_path, runtime_file
 
 
 class ConfigError(Exception):
@@ -387,9 +387,24 @@ class Config:
 
 def load_config(path: Optional[str] = None) -> Config:
     """便捷加载入口"""
-    target = path
-    if target is None:
-        target = resource_path("config.json")
-    elif not os.path.isabs(target):
-        target = resource_path(target)
+
+    if path is not None:
+        target = path if os.path.isabs(path) else resource_path(path)
+        return Config(target)
+
+    runtime_override = runtime_file("config.json")
+    bundled = resource_path("config.json")
+
+    if runtime_override != bundled and not os.path.exists(runtime_override):
+        try:
+            os.makedirs(os.path.dirname(runtime_override), exist_ok=True)
+            with open(bundled, "r", encoding="utf-8") as src, open(
+                runtime_override, "w", encoding="utf-8"
+            ) as dst:
+                dst.write(src.read())
+            print(f"已在运行目录生成配置文件副本：{runtime_override}")
+        except OSError:
+            pass
+
+    target = runtime_override if os.path.exists(runtime_override) else bundled
     return Config(target)
