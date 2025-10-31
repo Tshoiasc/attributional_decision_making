@@ -71,7 +71,7 @@ def resolve_output_directory(configured: str) -> Tuple[str, bool]:
         if _ensure_directory(configured):
             return configured, False
         fallback_root = user_data_dir()
-        fallback = _norm_join(fallback_root, os.path.basename(configured))
+        fallback = _norm_join(fallback_root, "data")
         _ensure_directory(fallback)
         return fallback, True
 
@@ -81,6 +81,8 @@ def resolve_output_directory(configured: str) -> Tuple[str, bool]:
 
     fallback_root = user_data_dir()
     fallback = _norm_join(fallback_root, configured)
+    if os.path.isdir(configured):
+        fallback = _norm_join(fallback_root, "data")
     _ensure_directory(fallback)
     return fallback, True
 

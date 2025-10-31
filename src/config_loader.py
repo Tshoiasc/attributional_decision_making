@@ -395,7 +395,11 @@ def load_config(path: Optional[str] = None) -> Config:
     runtime_override = runtime_file("config.json")
     bundled = resource_path("config.json")
 
-    if runtime_override != bundled and not os.path.exists(runtime_override):
+    if (
+        runtime_override != bundled
+        and not os.path.exists(runtime_override)
+        and os.path.exists(bundled)
+    ):
         try:
             os.makedirs(os.path.dirname(runtime_override), exist_ok=True)
             with open(bundled, "r", encoding="utf-8") as src, open(
