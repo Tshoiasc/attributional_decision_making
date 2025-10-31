@@ -76,6 +76,7 @@ coll = COLLECT(
     upx=True,
     upx_exclude=[],
     name="PsychExperiment",
+    
 )
 
 if sys.platform == "darwin":

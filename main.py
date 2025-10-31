@@ -18,6 +18,9 @@ from src.stimuli_manager import StimuliManager
 from src.utils.paths import resource_path, runtime_file
 
 
+_embedded_participant_info: Optional[Dict[str, str]] = None
+
+
 def create_fonts(config, scale: float) -> Dict[str, pygame.font.Font]:
     pygame.font.init()
     fonts_conf = config.fonts
@@ -66,6 +69,11 @@ def sanitize_for_filename(text: str) -> str:
 
 def load_participant_info_from_file() -> Optional[Dict[str, str]]:
     """从临时文件加载被试信息"""
+    global _embedded_participant_info
+    if _embedded_participant_info is not None:
+        info = _embedded_participant_info
+        _embedded_participant_info = None
+        return info
     temp_file = runtime_file("temp_participant_info.json")
     if os.path.exists(temp_file):
         try:
@@ -80,8 +88,35 @@ def load_participant_info_from_file() -> Optional[Dict[str, str]]:
     return None
 
 
+def ensure_participant_info_before_main() -> None:
+    """在冻结环境下确保先展示外置被试信息窗口。"""
+
+    if "--skip-participant-form" in sys.argv:
+        return
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        from participant_info_window import ParticipantInfoWindow
+
+        window = ParticipantInfoWindow()
+        info = window.run()
+        if not info:
+            return
+
+        temp_file = runtime_file("temp_participant_info.json")
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=2)
+
+        global _embedded_participant_info
+        _embedded_participant_info = info
+        sys.argv.append("--skip-participant-form")
+    except Exception as exc:
+        print(f"警告：外置被试信息窗口启动失败，将使用内置表单。详情：{exc}")
+
+
 def main() -> None:
     # 检查命令行参数
+    ensure_participant_info_before_main()
     skip_participant_form = "--skip-participant-form" in sys.argv
     
     try:
