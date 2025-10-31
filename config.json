@@ -17,8 +17,7 @@
     "label_high": "完全道德"
   },
   "timing": {
-    "second_question_probability": 0.7,
-    "second_question_delay_range": [
+    "question_delay_range": [
       1.5,
       3.5
     ],
@@ -83,28 +82,42 @@
     "show_debug": false,
     "show_question_symbols": false
   },
+  "question_display": {
+    "rating_bars": {
+      "enabled": true,
+      "per_question": [true, true],
+      "custom_rules": {
+        "by_position": {
+          "1": true,
+          "2": true
+        },
+        "by_category": {
+          "P": true,
+          "N": true,
+          "A": true
+        }
+      }
+    }
+  },
   "latin_square": {
     "enabled": true,
     "independent_question": true,
     "symbols": {
       "P": "道德题目",
       "N": "不道德题目",
-      "A": "中性题目",
-      "~": "空题位"
+      "A": "中性题目"
     },
     "rules": [
       "PP",
       "PN",
       "PA",
-      "P~",
       "NP",
       "NN",
-      "NA",
-      "N~"
+      "NA"
     ],
     "stimuli_rules": [
       "PN",
-      "P~"
+      "P"
     ]
   },
   "pictures_dir": "pictures"
