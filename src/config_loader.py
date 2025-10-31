@@ -2,7 +2,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.utils.paths import resolve_output_directory, resource_path, runtime_file
+from src.utils.paths import resolve_output_directory, resource_path, runtime_dir
 
 
 class ConfigError(Exception):
@@ -386,29 +386,24 @@ class Config:
 
 
 def load_config(path: Optional[str] = None) -> Config:
-    """便捷加载入口"""
+    """便捷加载入口，优先加载运行目录下的配置供外部覆盖。"""
 
-    if path is not None:
-        target = path if os.path.isabs(path) else resource_path(path)
-        return Config(target)
+    candidates = []
 
-    runtime_override = runtime_file("config.json")
-    bundled = resource_path("config.json")
+    if path is None:
+        candidates.append(os.path.join(runtime_dir(), "config.json"))
+        candidates.append(resource_path("config.json"))
+    else:
+        if os.path.isabs(path):
+            candidates.append(path)
+        else:
+            candidates.append(os.path.join(runtime_dir(), path))
+            candidates.append(resource_path(path))
 
-    if (
-        runtime_override != bundled
-        and not os.path.exists(runtime_override)
-        and os.path.exists(bundled)
-    ):
-        try:
-            os.makedirs(os.path.dirname(runtime_override), exist_ok=True)
-            with open(bundled, "r", encoding="utf-8") as src, open(
-                runtime_override, "w", encoding="utf-8"
-            ) as dst:
-                dst.write(src.read())
-            print(f"已在运行目录生成配置文件副本：{runtime_override}")
-        except OSError:
-            pass
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return Config(candidate)
 
-    target = runtime_override if os.path.exists(runtime_override) else bundled
+    # 如果都不存在，让 Config 自己抛出更友好的错误
+    target = candidates[-1]
     return Config(target)
