@@ -23,6 +23,7 @@ class Config:
         self.display: Dict[str, bool] = {}
         self.font_path: Optional[str] = None
         self.latin_square: Dict[str, Any] = {}
+        self.question_display: Dict[str, Any] = {}
         self._load()
 
     @property
@@ -50,6 +51,7 @@ class Config:
             self.display = self._normalize_display(self._raw.get("display", {}))
             self.font_path = self._resolve_path(self.fonts.get("path"))
             self.latin_square = self._parse_latin_square(self._raw.get("latin_square"))
+            self.question_display = self._raw.get("question_display", {})
         except KeyError as exc:
             raise ConfigError(f"配置缺失必需字段: {exc}") from exc
 
@@ -165,15 +167,11 @@ class Config:
         if step <= 0:
             raise ConfigError("评分步长必须为正数")
 
-        delay_range = self.timing.get("second_question_delay_range")
+        delay_range = self.timing.get("question_delay_range")
         if not isinstance(delay_range, list) or len(delay_range) != 2:
-            raise ConfigError("第二题延迟区间配置错误")
+            raise ConfigError("题目延迟区间配置错误")
         if delay_range[0] < 0 or delay_range[1] < delay_range[0]:
-            raise ConfigError("第二题延迟区间设置不合法")
-
-        probability = self.timing.get("second_question_probability", 0)
-        if not 0 <= probability <= 1:
-            raise ConfigError("第二题出现概率必须在0到1之间")
+            raise ConfigError("题目延迟区间设置不合法")
 
         if self.font_path and not os.path.exists(self.font_path):
             raise ConfigError(f"字体文件不存在: {self.font_path}")
@@ -201,19 +199,12 @@ class Config:
                 length_set = {len(rule["code"]) for rule in rules}
                 if not length_set or length_set == {0}:
                     raise ConfigError(f"拉丁方 {label} 不能为空")
-                if len(length_set) > 1:
-                    raise ConfigError(f"所有拉丁方 {label} 长度必须一致")
-                length = length_set.pop()
-                if length != 2:
-                    raise ConfigError("当前实验流程限定每个规则包含两个题目，请确保规则长度为 2")
                 if latin["symbols"]:
                     for symbol in latin["symbols"].keys():
                         if len(symbol) != 1:
                             raise ConfigError("latin_square.symbols 的键必须为单个字符")
                 for rule in rules:
                     for ch in rule["code"]:
-                        if ch == "~":
-                            continue
                         if latin["symbols"] and ch not in latin["symbols"]:
                             raise ConfigError(f"拉丁方 {label} 中使用了未定义的符号: {ch}")
                     prob = rule.get("probability")

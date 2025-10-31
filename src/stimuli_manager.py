@@ -16,11 +16,11 @@ class StimuliManager:
 
         # 通用状态
         self.current_rule_code: Optional[str] = None
-        self._pending_second_symbol: Optional[str] = None
-        self._pending_second_text: Optional[str] = None
         self._session_rules: List[str] = []
         self._session_rule_index: int = -1
-        self._preassigned_trials: List[Dict[str, Tuple[Optional[str], str]]] = []
+        self._preassigned_trials: List[List[Tuple[Optional[str], str]]] = []
+        self._current_trial_questions: List[Tuple[Optional[str], str]] = []
+        self._current_question_index: int = -1
 
         if self._use_latin:
             self._formal_rules: List[Dict[str, Any]] = list(self._latin_conf.get("rules", []))
@@ -62,7 +62,7 @@ class StimuliManager:
                     self._immoral.append(immoral_text)
 
     def _load_latin(self) -> None:
-        required_symbols = [symbol for symbol in self._active_symbols if symbol != "~"]
+        required_symbols = [symbol for symbol in self._active_symbols]
         if not required_symbols:
             raise ValueError("启用拉丁方需要至少一个有效符号")
 
@@ -92,11 +92,11 @@ class StimuliManager:
     ) -> None:
         """重置题目池，并在需要时为新的会话准备规则序列"""
         self.current_rule_code = None
-        self._pending_second_symbol = None
-        self._pending_second_text = None
         self._session_rules = []
         self._session_rule_index = -1
         self._preassigned_trials = []
+        self._current_trial_questions = []
+        self._current_question_index = -1
         self._active_rules = []
         self._active_rule_weights = []
 
@@ -209,6 +209,20 @@ class StimuliManager:
             self.reset_session()
 
     def take_first_question(self) -> Tuple[str, str]:
+        """向后兼容的方法，已废弃，请使用 begin_trial() 和 take_next_question()"""
+        if not self._current_trial_questions:
+            self.begin_trial()
+        result = self.take_next_question()
+        if result is None:
+            raise ValueError("无法获取题目")
+        return result
+
+    def take_second_question(self) -> Optional[Tuple[str, str]]:
+        """向后兼容的方法，已废弃，请使用 take_next_question()"""
+        return self.take_next_question()
+
+    def begin_trial(self) -> None:
+        """开始新的试次，准备该试次的所有题目"""
         if self._use_latin:
             if not self._session_rules:
                 raise ValueError("未准备拉丁方规则序列，请先调用 begin_run")
@@ -217,46 +231,36 @@ class StimuliManager:
                 raise ValueError("当前试次数已超出预设的规则序列")
             if not self._preassigned_trials:
                 raise ValueError("拉丁方题目尚未预分配")
-            assignment = self._preassigned_trials[self._session_rule_index]
-            first_text, first_symbol = assignment["first"]
-            if first_symbol == "~" or first_text is None:
-                raise ValueError("首个题目符号或题干无效")
-            second_text, second_symbol = assignment["second"]
             self.current_rule_code = self._session_rules[self._session_rule_index]
-            self._pending_second_symbol = second_symbol
-            self._pending_second_text = second_text
-            return first_text, first_symbol
+            self._current_trial_questions = self._preassigned_trials[self._session_rule_index].copy()
+            self._current_question_index = -1
+        else:
+            self.current_rule_code = None
+            self._current_trial_questions = []
+            self._current_question_index = -1
 
+    def take_next_question(self) -> Optional[Tuple[str, str]]:
+        """获取当前试次的下一个题目，如果已无更多题目则返回None"""
+        if self._use_latin:
+            if not self._current_trial_questions:
+                return None
+            self._current_question_index += 1
+            if self._current_question_index >= len(self._current_trial_questions):
+                return None
+            text, symbol = self._current_trial_questions[self._current_question_index]
+            if text is None:
+                return None
+            return text, symbol
+
+        # For non-Latin square mode, return questions from available pools
         pools = []
         if self._available_moral:
             pools.append("moral")
         if self._available_immoral:
             pools.append("immoral")
         if not pools:
-            raise ValueError("题库已耗尽，无法继续实验")
-        category = random.choice(pools)
-        return self._take_from_category(category), category
-
-    def take_second_question(self) -> Optional[Tuple[str, str]]:
-        if self._use_latin:
-            if not self.current_rule_code:
-                raise ValueError("尚未呈现第一题，无法获取第二题")
-            symbol = self._pending_second_symbol
-            text = self._pending_second_text
-            self._pending_second_symbol = None
-            self._pending_second_text = None
-            if not symbol or symbol == "~" or text is None:
-                return None
-            return text, symbol
-
-        candidates: List[Tuple[str, str]] = []
-        if self._available_moral:
-            candidates.append(("moral", self._available_moral[-1]))
-        if self._available_immoral:
-            candidates.append(("immoral", self._available_immoral[-1]))
-        if not candidates:
             return None
-        category, _ = random.choice(candidates)
+        category = random.choice(pools)
         return self._take_from_category(category), category
 
     # -------------------- 内部工具 --------------------
@@ -336,8 +340,6 @@ class StimuliManager:
             for usage in usages:
                 cap = float("inf")
                 for symbol, need in usage.items():
-                    if symbol == "~":
-                        continue
                     stock = available_counts.get(symbol, 0)
                     if need <= 0:
                         continue
@@ -395,8 +397,6 @@ class StimuliManager:
             for idx, count in enumerate(assigned):
                 usage = usages[idx]
                 for symbol, need in usage.items():
-                    if symbol == "~":
-                        continue
                     available_counts[symbol] -= need * count
                     if available_counts[symbol] < 0:
                         raise ValueError("题库题量不足以满足规则分配需求")
@@ -410,8 +410,6 @@ class StimuliManager:
     def _rule_feasible(self, code: str, available_counts: Dict[str, int]) -> bool:
         usage = Counter(code)
         for symbol, count in usage.items():
-            if symbol == "~":
-                continue
             if available_counts.get(symbol, 0) < count:
                 return False
         return True
@@ -424,8 +422,6 @@ class StimuliManager:
             if not self._rule_feasible(code, counts):
                 raise ValueError("题库题量不足以覆盖指定的规则序列")
             for symbol, usage in Counter(code).items():
-                if symbol == "~":
-                    continue
                 counts[symbol] -= usage
 
     def _symbol_counts(self) -> Dict[str, int]:
@@ -444,7 +440,7 @@ class StimuliManager:
         if not self._session_rules:
             raise ValueError("拉丁方规则序列为空，无法预分配题目")
 
-        assignments: List[Dict[str, Tuple[Optional[str], str]]] = []
+        assignments: List[List[Tuple[Optional[str], str]]] = []
         if self._independent_questions:
             pools: Dict[str, List[str]] = {
                 symbol: self._available_symbol_items.get(symbol, [])
@@ -460,8 +456,6 @@ class StimuliManager:
                     raise ValueError(f"符号 {symbol} 缺乏题库支持")
 
         def draw(symbol: str) -> Optional[str]:
-            if symbol == "~":
-                return None
             if self._independent_questions:
                 pool = pools.get(symbol)
                 if not pool:
@@ -476,18 +470,13 @@ class StimuliManager:
             symbols = list(code)
             if not symbols:
                 raise ValueError("拉丁方规则不能为空字符串")
-            first_symbol = symbols[0]
-            second_symbol = symbols[1] if len(symbols) > 1 else "~"
-            first_text = draw(first_symbol)
-            if first_text is None:
-                raise ValueError("首题符号不允许为空")
-            second_text = draw(second_symbol)
-            assignments.append(
-                {
-                    "first": (first_text, first_symbol),
-                    "second": (second_text, second_symbol),
-                }
-            )
+            trial_questions: List[Tuple[Optional[str], str]] = []
+            for symbol in symbols:
+                text = draw(symbol)
+                trial_questions.append((text, symbol))
+            if not trial_questions:
+                raise ValueError("试次必须包含至少一个题目")
+            assignments.append(trial_questions)
 
         self._preassigned_trials = assignments
 

@@ -46,6 +46,7 @@ class ExperimentScene:
         self.latin_enabled = bool(getattr(config, "latin_square", {}).get("enabled"))
         self.show_debug = bool(self.display.get("show_debug", False))
         self.show_symbols = bool(self.display.get("show_question_symbols", self.show_debug))
+        self.question_display = getattr(config, "question_display", {})
         self.total_trials = (
             config.experiment["practice_trials"]
             if mode == "practice"
@@ -106,8 +107,8 @@ class ExperimentScene:
         self.current_question_text: Optional[str] = None
         self.current_category: Optional[str] = None
         self.current_question_confirmed = False
-        self.has_real_second_question = False
-        self.second_question_payload: Optional[Tuple[str, str]] = None
+        self.current_questions: List[Tuple[str, str]] = []
+        self.current_question_index = -1
         self.waiting_target_time: Optional[float] = None
         self.current_rule_code: Optional[str] = None
         self._placeholder_repeat_text: Optional[str] = None
@@ -163,11 +164,11 @@ class ExperimentScene:
         self.current_question_order = 0
         self.current_question_text = None
         self.current_category = None
+        self.current_questions = []
+        self.current_question_index = -1
         self.slider.reset()
         self.confirm_button.set_enabled(False)
         self.last_question_duration = 0.0
-        self.has_real_second_question = False
-        self.second_question_payload = None
         self.waiting_target_time = None
         self.waiting_duration = 0.0
         self.current_question_confirmed = False
@@ -181,44 +182,64 @@ class ExperimentScene:
         self.previous_symbol = None
 
     def _present_first_question(self) -> None:
-        text, category = self.stimuli.take_first_question()
-        self._setup_question(text, category, order=1)
+        """准备当前试次的所有题目"""
+        self.stimuli.begin_trial()
         self.current_rule_code = getattr(self.stimuli, "current_rule_code", None)
-        delay_min, delay_max = self.config.timing["second_question_delay_range"]
-        if self.latin_enabled:
-            payload = self.stimuli.take_second_question()
-        else:
-            probability = self.config.timing["second_question_probability"]
-            show_second = random.random() < probability
-            if self.mode == "practice":
-                if self.current_trial == 1:
-                    show_second = False
-                elif self.current_trial == 2:
-                    show_second = True
-            payload = self.stimuli.take_second_question() if show_second else None
-        if payload:
-            self.has_real_second_question = True
-            self.second_question_payload = payload
-            self._placeholder_repeat_text = None
-        else:
-            self.has_real_second_question = False
-            base_text = self.previous_question_raw or text
-            subject_prefix = self.current_subject_name or ""
-            repeat_symbol = self.previous_symbol or self._category_symbol(category)
-            if self.show_symbols:
-                repeat_line = f"[{repeat_symbol}] {subject_prefix}{base_text}"
-                prefix = "[~] "
-            else:
-                repeat_line = f"{subject_prefix}{base_text}"
-                prefix = ""
-            instructions = (
-                f"{prefix}当前无新信息。请基于上一轮次行为：\n"
-                f"{repeat_line}\n"
-                "考虑你是否更改当前评价"
-            )
-            self._placeholder_repeat_text = repeat_line
-            self.second_question_payload = (instructions, "none")
-        self.waiting_duration = random.uniform(delay_min, delay_max)
+        
+        # 收集所有题目
+        questions: List[Tuple[str, str]] = []
+        question = self.stimuli.take_next_question()
+        while question:
+            questions.append(question)
+            question = self.stimuli.take_next_question()
+        
+        if not questions:
+            raise ValueError("试次中没有可用题目")
+        
+        self.current_questions = questions
+        self.current_question_index = -1
+        self._present_next_question()
+
+    def _present_next_question(self) -> None:
+        """呈现下一个题目"""
+        if self.current_question_index >= len(self.current_questions) - 1:
+            # 所有题目已完成，进入下一个试次
+            self._prepare_next_trial()
+            return
+        
+        self.current_question_index += 1
+        text, category = self.current_questions[self.current_question_index]
+        self._setup_question(text, category, order=self.current_question_index + 1)
+
+    def _should_show_rating_bar(self, order: int, category: str) -> bool:
+        """根据配置判断是否应该显示评分条"""
+        rating_bars_conf = self.question_display.get("rating_bars", {})
+        if not rating_bars_conf.get("enabled", True):
+            return False
+        
+        # 检查 per_question 配置
+        per_question = rating_bars_conf.get("per_question")
+        if isinstance(per_question, list):
+            if 0 <= order - 1 < len(per_question):
+                return bool(per_question[order - 1])
+        
+        # 检查 by_position 配置
+        custom_rules = rating_bars_conf.get("custom_rules", {})
+        by_position = custom_rules.get("by_position", {})
+        if isinstance(by_position, dict):
+            pos_key = str(order)
+            if pos_key in by_position:
+                return bool(by_position[pos_key])
+        
+        # 检查 by_category 配置
+        by_category = custom_rules.get("by_category", {})
+        if isinstance(by_category, dict):
+            symbol = self._category_symbol(category)
+            if symbol in by_category:
+                return bool(by_category[symbol])
+        
+        # 默认显示
+        return True
 
     def _setup_question(self, text: str, category: str, order: int) -> None:
         self.current_question_order = order
@@ -233,23 +254,32 @@ class ExperimentScene:
         if order == 1:
             self.previous_question_raw = text
             self.previous_symbol = self.current_symbol
-        if order == 2 and self.previous_rating_value is not None:
+        # 如果不是第一题，且之前有评分值，则恢复之前的评分值
+        if order > 1 and self.previous_rating_value is not None:
             self.slider.set_value(self.previous_rating_value)
-        self.slider.set_enabled(True)
-        self.confirm_button.set_enabled(True)
-        self.slider_enabled_time = self.question_start_time
-        if order == 2 and self.current_category == "none":
-            self.current_question_display = text
-            self._current_question_highlight = self._placeholder_repeat_text
+        
+        # 根据配置决定是否显示评分条
+        show_rating = self._should_show_rating_bar(order, category)
+        if show_rating:
+            self.slider.set_enabled(True)
+            self.confirm_button.set_enabled(True)
+            self.slider_enabled_time = self.question_start_time
         else:
-            self.current_question_display = self._compose_question_display(text)
-            self._current_question_highlight = None
+            # 如果不显示评分条，直接使用默认值并允许确认
+            self.slider.set_value(self.slider.min_value)
+            self.slider.set_enabled(False)
+            self.confirm_button.set_enabled(True)
+            self.slider_enabled_time = None
+        
+        self.current_question_display = self._compose_question_display(text)
+        self._current_question_highlight = None
         self._refresh_question_segments()
 
     def _confirm_rating(self) -> None:
-        if self.state != "question" or not self.slider.enabled:
+        if self.state != "question":
             return
-        self.slider.set_enabled(False)
+        if self.slider.enabled:
+            self.slider.set_enabled(False)
         self.confirm_button.set_enabled(False)
         self.current_question_confirmed = True
         confirm_time = time.perf_counter()
@@ -258,9 +288,12 @@ class ExperimentScene:
         elapsed = confirm_time - (self.question_start_time or confirm_time)
         trial_elapsed = confirm_time - self.trial_start_time
         self.last_question_duration = elapsed
-        rating_value = self.slider.value
+        # 如果评分条未启用，使用默认值（最小值）
+        rating_value = self.slider.value if self.slider.enabled or self.slider_enabled_time else self.slider.min_value
         if self.current_question_order == 1:
             self.previous_rating_value = rating_value
+        
+        # 记录数据
         self.recorder.record(
             mode=self.mode,
             trial_index=self.current_trial,
@@ -272,23 +305,21 @@ class ExperimentScene:
             rating_confirmed_at=confirm_time - self.experiment_start,
             elapsed_since_display=elapsed,
             trial_elapsed_total=trial_elapsed,
-            second_question_presented=self.has_real_second_question,
+            second_question_presented=len(self.current_questions) > 1,
             rule_code=self.current_rule_code if self.current_rule_code else None,
         )
 
-        if self.current_question_order == 1:
-            self.state = "waiting_second"
+        # 判断是否还有更多题目
+        if self.current_question_index < len(self.current_questions) - 1:
+            # 还有更多题目，等待后呈现下一个
+            delay_min, delay_max = self.config.timing["question_delay_range"]
+            self.waiting_duration = random.uniform(delay_min, delay_max)
+            self.state = "waiting_next"
             self.waiting_target_time = confirm_time + self.waiting_duration
-            self.current_rule_code = self.current_rule_code
         else:
+            # 所有题目完成，进入下一个试次
             self._prepare_next_trial()
 
-    def _present_second_question(self) -> None:
-        if not self.second_question_payload:
-            self._prepare_next_trial()
-            return
-        text, category = self.second_question_payload
-        self._setup_question(text, category, order=2)
 
     def handle_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -315,9 +346,9 @@ class ExperimentScene:
         if self.state == "transition":
             if now - self.transition_start >= self.config.timing["transition_duration"]:
                 self._present_first_question()
-        elif self.state == "waiting_second":
+        elif self.state == "waiting_next":
             if self.waiting_target_time and now >= self.waiting_target_time:
-                self._present_second_question()
+                self._present_next_question()
 
     def draw(self) -> None:
         self.screen.fill(self.colors["background"])
@@ -331,7 +362,7 @@ class ExperimentScene:
             self._draw_transition()
         elif self.state == "question":
             self._draw_question()
-        elif self.state == "waiting_second":
+        elif self.state == "waiting_next":
             self._draw_waiting()
         elif self.state == "completed":
             self._draw_completed()
@@ -426,7 +457,9 @@ class ExperimentScene:
 
     def _draw_question(self) -> None:
         self._draw_question_panel()
-        self.slider.draw(self.screen)
+        # 只有当评分条启用时才绘制
+        if self._should_show_rating_bar(self.current_question_order, self.current_category or ""):
+            self.slider.draw(self.screen)
         self.confirm_button.draw(self.screen)
 
     def _draw_waiting(self) -> None:
