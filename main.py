@@ -1,4 +1,9 @@
+import json
+import os
+import platform
+import re
 import sys
+import subprocess
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -52,7 +57,32 @@ def create_fonts(config, scale: float) -> Dict[str, pygame.font.Font]:
     }
 
 
+def sanitize_for_filename(text: str) -> str:
+    cleaned = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "_", text.strip()) if text else ""
+    cleaned = cleaned.strip("_")
+    return cleaned or "Participant"
+
+
+def load_participant_info_from_file() -> Optional[Dict[str, str]]:
+    """从临时文件加载被试信息"""
+    temp_file = "temp_participant_info.json"
+    if os.path.exists(temp_file):
+        try:
+            with open(temp_file, "r", encoding="utf-8") as f:
+                info = json.load(f)
+            # 删除临时文件
+            os.remove(temp_file)
+            print("已从临时文件加载被试信息:", info)
+            return info
+        except Exception as e:
+            print(f"加载被试信息文件时出错: {e}")
+    return None
+
+
 def main() -> None:
+    # 检查命令行参数
+    skip_participant_form = "--skip-participant-form" in sys.argv
+    
     try:
         config = load_config()
     except ConfigError as exc:
@@ -73,16 +103,52 @@ def main() -> None:
 
     pygame.init()
 
+    # Windows输入法支持：启动ctfmon.exe
+    is_windows = platform.system() == "Windows"
+    is_mac = platform.system() == "Darwin"
+    
+    if is_windows:
+        try:
+            # 启动Windows输入法服务
+            subprocess.Popen(["ctfmon.exe"], shell=True)
+            print("已启动Windows输入法服务 (ctfmon.exe)")
+        except Exception as e:
+            print(f"启动输入法服务时出现警告: {e}")
+
     base_width = config.window.get("width", 1920)
     base_height = config.window.get("height", 1080)
     fullscreen = bool(config.window.get("fullscreen"))
+    windows_ime_fix = bool(config.window.get("windows_ime_fix", True))
+    mac_fullscreen_fix = bool(config.window.get("mac_fullscreen_fix", True))
 
     if fullscreen:
         display_info = pygame.display.Info()
         actual_width = display_info.current_w
         actual_height = display_info.current_h
-        flags = pygame.FULLSCREEN
-        screen = pygame.display.set_mode((actual_width, actual_height), flags)
+
+        # Windows: 尝试多种模式来支持输入法
+        if is_windows and windows_ime_fix:
+            # 优先尝试SCALED模式（伪全屏但支持系统UI）
+            try:
+                os.environ['SDL_VIDEODRIVER'] = 'windows'
+                flags = pygame.SCALED | pygame.RESIZABLE
+                screen = pygame.display.set_mode((actual_width, actual_height), flags)
+                print("Windows系统：使用SCALED伪全屏模式以支持输入法显示")
+                print("提示：按Alt+Tab可切换窗口，Esc键退出程序")
+            except Exception as e:
+                print(f"SCALED模式失败，回退到NOFRAME模式: {e}")
+                flags = pygame.NOFRAME
+                screen = pygame.display.set_mode((actual_width, actual_height), flags)
+                print("Windows系统：使用NOFRAME无边框模式")
+            print("如需禁用此兼容模式，请在config.json中设置\"windows_ime_fix\": false")
+        elif is_mac and mac_fullscreen_fix:
+            flags = pygame.NOFRAME
+            screen = pygame.display.set_mode((actual_width, actual_height), flags)
+            print("macOS系统检测到，已使用无边框全屏模式以获得更好的兼容性")
+            print("如需禁用此兼容模式，请在config.json中设置\"mac_fullscreen_fix\": false")
+        else:
+            flags = pygame.FULLSCREEN
+            screen = pygame.display.set_mode((actual_width, actual_height), flags)
     else:
         actual_width = base_width
         actual_height = base_height
@@ -100,7 +166,14 @@ def main() -> None:
     fonts = create_fonts(config, scale)
 
     recorder: DataRecorder = DataRecorder(config.export_path("临时.csv"))
+    
+    # 尝试从文件加载被试信息（如果是通过独立窗口启动）
     participant_info: Optional[Dict[str, str]] = None
+    if skip_participant_form:
+        participant_info = load_participant_info_from_file()
+        if not participant_info:
+            print("错误：启动时指定跳过被试信息录入，但未找到被试信息文件")
+            sys.exit(1)
 
     current_scene = None
     state = "participant"
@@ -112,6 +185,10 @@ def main() -> None:
 
     def collect_participant(initial: bool = False) -> None:
         nonlocal current_scene, state
+        # 如果跳过被试信息录入且已有信息，直接进入主菜单
+        if skip_participant_form and participant_info:
+            go_menu()
+            return
         state = "participant"
         current_scene = ParticipantFormScene(
             screen=screen,
@@ -148,17 +225,29 @@ def main() -> None:
         if participant_info is None:
             collect_participant(initial=True)
             return
+        safe_name = sanitize_for_filename(participant_info.get("name", ""))
         if mode == "practice":
             total_trials = stimuli_manager.practice_trial_count()
         else:
             total_trials = config.experiment["formal_trials"]
         stimuli_manager.begin_run(mode, total_trials)
         if mode == "practice":
-            export_name = config.experiment["practice_output"]
+            base_name = config.experiment["practice_output"]
+            directory, filename = os.path.split(base_name)
+            stem, ext = os.path.splitext(filename)
+            if not stem:
+                stem = "practice_results"
+            ext = ext or ".csv"
+            export_filename = f"{safe_name}_{stem}{ext}"
+            export_name = os.path.join(directory, export_filename) if directory else export_filename
         else:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             prefix = config.experiment.get("formal_output_prefix", "formal_results")
-            export_name = f"{prefix}_{timestamp}.csv"
+            directory, base_prefix = os.path.split(prefix)
+            if not base_prefix:
+                base_prefix = "formal_results"
+            export_filename = f"{safe_name}_{base_prefix}_{timestamp}.csv"
+            export_name = os.path.join(directory, export_filename) if directory else export_filename
         recorder = DataRecorder(config.export_path(export_name))
         recorder.set_participant_info(participant_info)
         state = "experiment"

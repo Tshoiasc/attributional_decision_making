@@ -20,16 +20,21 @@ class StimuliManager:
         self._pending_second_text: Optional[str] = None
         self._session_rules: List[str] = []
         self._session_rule_index: int = -1
-        self._unique_rule_codes: List[str] = []
         self._preassigned_trials: List[Dict[str, Tuple[Optional[str], str]]] = []
 
         if self._use_latin:
-            self._rules: List[Dict[str, Any]] = list(self._latin_conf.get("rules", []))
-            self._rule_weights: List[float] = self._compute_rule_weights(self._rules)
-            self._active_symbols: List[str] = sorted(self._collect_active_symbols(self._rules))
+            self._formal_rules: List[Dict[str, Any]] = list(self._latin_conf.get("rules", []))
+            self._formal_rule_weights: List[float] = self._compute_rule_weights(self._formal_rules)
+            self._practice_rules: List[Dict[str, Any]] = list(self._latin_conf.get("stimuli_rules", []))
+            self._practice_rule_weights: List[float] = (
+                self._compute_rule_weights(self._practice_rules) if self._practice_rules else []
+            )
+            combined_rules = self._formal_rules + self._practice_rules
+            self._active_symbols: List[str] = sorted(self._collect_active_symbols(combined_rules))
             self._symbol_items: Dict[str, List[str]] = {}
             self._available_symbol_items: Dict[str, List[str]] = {}
-            self._unique_rule_codes = self._compute_unique_rule_codes(self._rules)
+            self._active_rules: List[Dict[str, Any]] = []
+            self._active_rule_weights: List[float] = []
             self._load_latin()
         else:
             self._moral: List[str] = []
@@ -92,6 +97,8 @@ class StimuliManager:
         self._session_rules = []
         self._session_rule_index = -1
         self._preassigned_trials = []
+        self._active_rules = []
+        self._active_rule_weights = []
 
         if self._use_latin:
             self._available_symbol_items = {
@@ -101,14 +108,26 @@ class StimuliManager:
             for items in self._available_symbol_items.values():
                 random.shuffle(items)
             if forced_sequence is not None:
+                rules, weights = self._select_ruleset(mode)
                 if self._independent_questions:
-                    base_counts = {
-                        symbol: len(items) for symbol, items in self._available_symbol_items.items()
-                    }
-                    self._validate_sequence_feasible(forced_sequence, base_counts)
+                    self._validate_sequence_feasible(
+                        forced_sequence,
+                        self._symbol_counts(),
+                    )
                 self._session_rules = forced_sequence.copy()
-            elif mode and trial_count:
-                self._session_rules = self._build_rule_sequence(trial_count)
+                self._active_rules = rules
+                self._active_rule_weights = weights
+            elif mode is not None and trial_count is not None:
+                rules, weights = self._select_ruleset(mode)
+                counts = self._symbol_counts() if self._independent_questions else None
+                self._session_rules = self._build_rule_sequence(
+                    rules,
+                    weights,
+                    trial_count,
+                    counts,
+                )
+                self._active_rules = rules
+                self._active_rule_weights = weights
             self._session_rule_index = -1
         else:
             self._available_moral = self._moral.copy()
@@ -132,11 +151,7 @@ class StimuliManager:
 
     def validate_capacity(self) -> None:
         """校验题库是否支撑配置的试次数与规则组合"""
-        practice_trials = (
-            len(self._unique_rule_codes)
-            if self._use_latin
-            else int(self._config.experiment.get("practice_trials", 0))
-        )
+        practice_trials = int(self._config.experiment.get("practice_trials", 0))
         formal_trials = int(self._config.experiment.get("formal_trials", 0))
 
         if not self._use_latin:
@@ -153,37 +168,43 @@ class StimuliManager:
             return
 
         # 拉丁方情境
-        if len(self._rules) > formal_trials:
-            raise ValueError("拉丁方规则数量不能超过正式实验试次数")
-
-        base_counts = {symbol: len(items) for symbol, items in self._symbol_items.items()}
+        base_counts = self._symbol_counts()
         for symbol, count in base_counts.items():
             if count == 0:
                 raise ValueError(f"符号 {symbol} 缺乏题库支持")
 
+        if len(self._formal_rules) > formal_trials:
+            raise ValueError("拉丁方规则数量不能超过正式实验试次数")
+
         if self._independent_questions:
             if formal_trials > 0:
                 try:
-                    self._build_rule_sequence(formal_trials, base_counts)
+                    self._build_rule_sequence(
+                        self._formal_rules,
+                        self._formal_rule_weights,
+                        formal_trials,
+                        base_counts,
+                    )
                 except ValueError as exc:
                     raise ValueError(f"正式实验的拉丁方规则无法排布：{exc}") from exc
             if practice_trials > 0:
+                practice_rules, practice_weights = self._select_ruleset("practice")
                 try:
-                    self._validate_sequence_feasible(self._unique_rule_codes, base_counts)
+                    self._build_rule_sequence(
+                        practice_rules,
+                        practice_weights,
+                        practice_trials,
+                        base_counts,
+                    )
                 except ValueError as exc:
                     raise ValueError(f"模拟实验的拉丁方规则无法排布：{exc}") from exc
 
     def begin_run(self, mode: str, trial_count: int) -> None:
         """为新的实验流程准备题库及规则序列"""
         if self._use_latin:
-            if mode == "practice":
-                sequence = self._unique_rule_codes.copy()
-                if not sequence:
-                    raise ValueError("拉丁方规则未配置，无法进行模拟试次")
-                self.reset_session(mode=mode, trial_count=len(sequence), forced_sequence=sequence)
-            else:
-                self.reset_session(mode=mode, trial_count=trial_count)
-            self._prepare_preassigned_trials()
+            self.reset_session(mode=mode, trial_count=trial_count)
+            if self._session_rules:
+                self._prepare_preassigned_trials()
         else:
             self.reset_session()
 
@@ -293,24 +314,23 @@ class StimuliManager:
         return list(symbols)
 
     def _build_rule_sequence(
-        self, trial_count: int, available_counts: Optional[Dict[str, int]] = None
+        self,
+        rules: List[Dict[str, Any]],
+        weights: List[float],
+        trial_count: int,
+        available_counts: Optional[Dict[str, int]] = None,
     ) -> List[str]:
         if trial_count <= 0:
             return []
-        if not self._rules:
-            raise ValueError("拉丁方规则未配置，无法生成序列")
+        if not rules:
+            raise ValueError("未配置拉丁方规则，无法生成序列")
 
         if available_counts is None:
-            if self._independent_questions:
-                available_counts = {
-                    symbol: len(items) for symbol, items in self._available_symbol_items.items()
-                }
-            else:
-                available_counts = {}
+            available_counts = self._symbol_counts() if self._independent_questions else {}
         else:
             available_counts = available_counts.copy()
 
-        usages: List[Counter] = [Counter(rule["code"]) for rule in self._rules]
+        usages: List[Counter] = [Counter(rule["code"]) for rule in rules]
         feasible_caps: List[int] = []
         if self._independent_questions:
             for usage in usages:
@@ -324,15 +344,15 @@ class StimuliManager:
                     cap = min(cap, stock // need if need else float("inf"))
                 feasible_caps.append(int(cap) if cap != float("inf") else trial_count)
         else:
-            feasible_caps = [trial_count] * len(self._rules)
+            feasible_caps = [trial_count] * len(rules)
 
-        weights = self._rule_weights or [1.0 / len(self._rules)] * len(self._rules)
-        if sum(weights) == 0:
-            weights = [1.0 / len(self._rules)] * len(self._rules)
+        local_weights = weights or [1.0 / len(rules)] * len(rules)
+        if sum(local_weights) == 0:
+            local_weights = [1.0 / len(rules)] * len(rules)
 
-        raw_counts = [weight * trial_count for weight in weights]
-        assigned = [0] * len(self._rules)
-        fractions = [0.0] * len(self._rules)
+        raw_counts = [weight * trial_count for weight in local_weights]
+        assigned = [0] * len(rules)
+        fractions = [0.0] * len(rules)
         total_assigned = 0
         for idx, raw in enumerate(raw_counts):
             base = int(raw)
@@ -355,21 +375,19 @@ class StimuliManager:
             if best_idx == -1:
                 if self._independent_questions:
                     raise ValueError("题库题量不足，无法满足设定的试次数或概率分配")
-                # 非独立模式理论上不会出现
                 raise ValueError("规则权重分配失败")
             assigned[best_idx] += 1
             fractions[best_idx] = 0.0
             remainder -= 1
 
-        # 若某些 rule 的期望值为 0，但仍有剩余容量（极端情况），均分补齐
         if sum(assigned) < trial_count:
             leftover = trial_count - sum(assigned)
-            for idx in range(len(self._rules)):
-                if leftover == 0:
-                    break
-                if assigned[idx] < feasible_caps[idx]:
-                    assigned[idx] += 1
+            idx_loop = 0
+            while leftover > 0 and idx_loop < len(rules):
+                if assigned[idx_loop] < feasible_caps[idx_loop]:
+                    assigned[idx_loop] += 1
                     leftover -= 1
+                idx_loop += 1
         if sum(assigned) != trial_count:
             raise ValueError("规则计数分配异常，无法匹配试次数")
 
@@ -385,7 +403,7 @@ class StimuliManager:
 
         sequence: List[str] = []
         for idx, count in enumerate(assigned):
-            sequence.extend([self._rules[idx]["code"]] * count)
+            sequence.extend([rules[idx]["code"]] * count)
         random.shuffle(sequence)
         return sequence
 
@@ -409,6 +427,18 @@ class StimuliManager:
                 if symbol == "~":
                     continue
                 counts[symbol] -= usage
+
+    def _symbol_counts(self) -> Dict[str, int]:
+        return {symbol: len(items) for symbol, items in self._symbol_items.items()}
+
+    def _select_ruleset(
+        self, mode: Optional[str]
+    ) -> Tuple[List[Dict[str, Any]], List[float]]:
+        if mode == "practice":
+            if self._practice_rules:
+                return self._practice_rules, self._practice_rule_weights
+            return self._formal_rules, self._formal_rule_weights
+        return self._formal_rules, self._formal_rule_weights
 
     def _prepare_preassigned_trials(self) -> None:
         if not self._session_rules:
@@ -461,16 +491,6 @@ class StimuliManager:
 
         self._preassigned_trials = assignments
 
-    def _compute_unique_rule_codes(self, rules: List[Dict[str, Any]]) -> List[str]:
-        seen: Dict[str, bool] = {}
-        unique: List[str] = []
-        for rule in rules:
-            code = rule.get("code", "")
-            if code and code not in seen:
-                seen[code] = True
-                unique.append(code)
-        return unique
-
     def get_rule_plan(self) -> List[str]:
         return self._session_rules.copy()
 
@@ -480,15 +500,15 @@ class StimuliManager:
         return dict(self._latin_conf.get("symbols", {}))
 
     def practice_trial_count(self) -> int:
-        if self._use_latin:
-            return len(self._unique_rule_codes)
         return int(self._config.experiment.get("practice_trials", 0))
 
     def get_rule_weights(self) -> List[Tuple[str, float, Optional[float]]]:
         if not self._use_latin:
             return []
+        rules = self._active_rules if self._active_rules else self._formal_rules
+        weights = self._active_rule_weights if self._active_rule_weights else self._formal_rule_weights
         result: List[Tuple[str, float, Optional[float]]] = []
-        for rule, weight in zip(self._rules, self._rule_weights):
+        for rule, weight in zip(rules, weights):
             result.append((rule.get("code", ""), weight, rule.get("probability")))
         return result
 

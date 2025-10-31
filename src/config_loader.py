@@ -61,6 +61,7 @@ class Config:
             "enabled": False,
             "symbols": {},
             "rules": [],
+            "stimuli_rules": [],
             "independent_question": False,
         }
         if raw_conf is None:
@@ -82,34 +83,38 @@ class Config:
                 raise ConfigError("latin_square.symbols 的符号不能包含首尾空格")
             normalized_symbols[key] = str(value) if value is not None else ""
 
-        rules_raw = raw_conf.get("rules", [])
-        if rules_raw is None:
-            rules_raw = []
-        if not isinstance(rules_raw, list):
-            raise ConfigError("latin_square.rules 必须为数组")
-        rules: List[Dict[str, Any]] = []
-        for entry in rules_raw:
-            if isinstance(entry, str):
-                code = entry.strip()
-                if not code:
-                    raise ConfigError("latin_square.rules 中存在空的规则字符串")
-                rules.append({"code": code, "probability": None})
-            elif isinstance(entry, dict):
-                code = entry.get("code")
-                if not isinstance(code, str) or not code.strip():
-                    raise ConfigError("latin_square.rules 中的对象缺少有效的 code")
-                code = code.strip()
-                probability = entry.get("probability")
-                if probability is not None:
-                    try:
-                        probability = float(probability)
-                    except (TypeError, ValueError) as exc:
-                        raise ConfigError("latin_square.rules.probability 必须为数值") from exc
-                    if probability < 0:
-                        raise ConfigError("latin_square.rules.probability 不能为负数")
-                rules.append({"code": code, "probability": probability})
-            else:
-                raise ConfigError("latin_square.rules 每一项必须为字符串或对象")
+        def parse_rules_array(name: str, raw_list: Any) -> List[Dict[str, Any]]:
+            if raw_list is None:
+                return []
+            if not isinstance(raw_list, list):
+                raise ConfigError(f"latin_square.{name} 必须为数组")
+            parsed: List[Dict[str, Any]] = []
+            for entry in raw_list:
+                if isinstance(entry, str):
+                    code = entry.strip()
+                    if not code:
+                        raise ConfigError(f"latin_square.{name} 中存在空的规则字符串")
+                    parsed.append({"code": code, "probability": None})
+                elif isinstance(entry, dict):
+                    code = entry.get("code")
+                    if not isinstance(code, str) or not code.strip():
+                        raise ConfigError(f"latin_square.{name} 中的对象缺少有效的 code")
+                    code = code.strip()
+                    probability = entry.get("probability")
+                    if probability is not None:
+                        try:
+                            probability = float(probability)
+                        except (TypeError, ValueError) as exc:
+                            raise ConfigError(f"latin_square.{name}.probability 必须为数值") from exc
+                        if probability < 0:
+                            raise ConfigError(f"latin_square.{name}.probability 不能为负数")
+                    parsed.append({"code": code, "probability": probability})
+                else:
+                    raise ConfigError(f"latin_square.{name} 每一项必须为字符串或对象")
+            return parsed
+
+        rules = parse_rules_array("rules", raw_conf.get("rules", []))
+        stimuli_rules = parse_rules_array("stimuli_rules", raw_conf.get("stimuli_rules"))
 
         independent = bool(raw_conf.get("independent_question", False))
 
@@ -117,6 +122,7 @@ class Config:
             "enabled": enabled,
             "symbols": normalized_symbols,
             "rules": rules,
+            "stimuli_rules": stimuli_rules,
             "independent_question": independent,
         }
 
@@ -187,39 +193,48 @@ class Config:
 
         latin = self.latin_square
         if latin.get("enabled"):
-            if not latin["rules"]:
-                raise ConfigError("启用拉丁方时必须配置至少一条规则")
-            rule_length_set = {len(rule["code"]) for rule in latin["rules"]}
-            if not rule_length_set or rule_length_set == {0}:
-                raise ConfigError("拉丁方规则不能为空")
-            if len(rule_length_set) > 1:
-                raise ConfigError("所有拉丁方规则长度必须一致")
-            rule_length = rule_length_set.pop()
-            if rule_length != 2:
-                raise ConfigError("当前实验流程限定每个规则包含两个题目，请确保规则长度为 2")
-            if latin["symbols"]:
-                for symbol in latin["symbols"].keys():
-                    if len(symbol) != 1:
-                        raise ConfigError("latin_square.symbols 的键必须为单个字符")
-            for rule in latin["rules"]:
-                for ch in rule["code"]:
-                    if ch == "~":
-                        continue
-                    if latin["symbols"] and ch not in latin["symbols"]:
-                        raise ConfigError(f"拉丁方规则中使用了未定义的符号: {ch}")
-                prob = rule.get("probability")
-                if prob is not None and prob == float("inf"):
-                    raise ConfigError("拉丁方概率配置非法")
-            unique_rules = {rule["code"] for rule in latin["rules"]}
+            def validate_ruleset(rules: List[Dict[str, Any]], label: str, require_non_empty: bool) -> None:
+                if require_non_empty and not rules:
+                    raise ConfigError(f"启用拉丁方时必须配置至少一条 {label}")
+                if not rules:
+                    return
+                length_set = {len(rule["code"]) for rule in rules}
+                if not length_set or length_set == {0}:
+                    raise ConfigError(f"拉丁方 {label} 不能为空")
+                if len(length_set) > 1:
+                    raise ConfigError(f"所有拉丁方 {label} 长度必须一致")
+                length = length_set.pop()
+                if length != 2:
+                    raise ConfigError("当前实验流程限定每个规则包含两个题目，请确保规则长度为 2")
+                if latin["symbols"]:
+                    for symbol in latin["symbols"].keys():
+                        if len(symbol) != 1:
+                            raise ConfigError("latin_square.symbols 的键必须为单个字符")
+                for rule in rules:
+                    for ch in rule["code"]:
+                        if ch == "~":
+                            continue
+                        if latin["symbols"] and ch not in latin["symbols"]:
+                            raise ConfigError(f"拉丁方 {label} 中使用了未定义的符号: {ch}")
+                    prob = rule.get("probability")
+                    if prob is not None and prob == float("inf"):
+                        raise ConfigError("拉丁方概率配置非法")
+                specified_probs = [rule["probability"] for rule in rules if rule["probability"] is not None]
+                total_specified = sum(specified_probs)
+                if total_specified > 1 + 1e-6:
+                    raise ConfigError(f"拉丁方 {label} 的概率之和不能超过 1")
+                unspecified = len(rules) - len(specified_probs)
+                if unspecified > 0 and total_specified >= 1 - 1e-6:
+                    raise ConfigError(f"拉丁方 {label} 中存在未声明概率的规则，但已无剩余概率可分配")
+
+            formal_rules = latin["rules"]
+            validate_ruleset(formal_rules, "rules", True)
+            practice_rules = latin.get("stimuli_rules", [])
+            validate_ruleset(practice_rules, "stimuli_rules", False)
+
+            unique_rules = {rule["code"] for rule in formal_rules}
             if len(unique_rules) > formal_trials:
                 raise ConfigError("拉丁方规则数量不能超过正式实验试次数")
-            specified = [rule["probability"] for rule in latin["rules"] if rule["probability"] is not None]
-            total_spec = sum(specified)
-            if total_spec > 1 + 1e-6:
-                raise ConfigError("拉丁方概率之和不能超过 1")
-            unspecified_count = len(latin["rules"]) - len(specified)
-            if unspecified_count > 0 and total_spec >= 1 - 1e-6:
-                raise ConfigError("存在未声明概率的规则，但已无剩余概率可分配")
 
     def ensure_stimuli_capacity(self, stimuli_manager: Any) -> None:
         """校验题库容量是否满足试次需求"""

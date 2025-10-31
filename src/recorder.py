@@ -112,7 +112,7 @@ class DataRecorder:
             bucket[f"{prefix}_elapsed_since_display"] = record.elapsed_since_display
             bucket[f"{prefix}_trial_elapsed_total"] = record.trial_elapsed_total
             if record.question_order == 2:
-                bucket["q2_presented"] = True
+                bucket["q2_presented"] = record.second_question_presented
             else:
                 bucket["q2_presented"] = record.second_question_presented
         fieldnames = [

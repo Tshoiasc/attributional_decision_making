@@ -41,9 +41,11 @@ class ExperimentScene:
         self.display = getattr(config, "display", {"show_timer": True, "show_participant_info": True})
         if not isinstance(self.display, dict):
             self.display = {"show_timer": True, "show_participant_info": True}
+        self.texts = getattr(config, "texts", {})
         rating_conf = config.rating
         self.latin_enabled = bool(getattr(config, "latin_square", {}).get("enabled"))
         self.show_debug = bool(self.display.get("show_debug", False))
+        self.show_symbols = bool(self.display.get("show_question_symbols", self.show_debug))
         self.total_trials = (
             config.experiment["practice_trials"]
             if mode == "practice"
@@ -79,6 +81,7 @@ class ExperimentScene:
             colors=(self.colors["accent"], self.colors["accent"], self.colors["disabled"]),
             label_color=self.colors["text_primary"],
             scale=self.scale,
+            label_medium=rating_conf.get("label_medium", ""),
         )
 
         button_font = self.fonts["body"]
@@ -202,9 +205,14 @@ class ExperimentScene:
             base_text = self.previous_question_raw or text
             subject_prefix = self.current_subject_name or ""
             repeat_symbol = self.previous_symbol or self._category_symbol(category)
-            repeat_line = f"[{repeat_symbol}] {subject_prefix}{base_text}，"
+            if self.show_symbols:
+                repeat_line = f"[{repeat_symbol}] {subject_prefix}{base_text}"
+                prefix = "[~] "
+            else:
+                repeat_line = f"{subject_prefix}{base_text}"
+                prefix = ""
             instructions = (
-                "[~] 当前无新信息。请基于上一轮次行为：\n"
+                f"{prefix}当前无新信息。请基于上一轮次行为：\n"
                 f"{repeat_line}\n"
                 "考虑你是否更改当前评价"
             )
@@ -271,6 +279,7 @@ class ExperimentScene:
         if self.current_question_order == 1:
             self.state = "waiting_second"
             self.waiting_target_time = confirm_time + self.waiting_duration
+            self.current_rule_code = self.current_rule_code
         else:
             self._prepare_next_trial()
 
@@ -371,16 +380,45 @@ class ExperimentScene:
         lines = self._debug_lines or ("未启用拉丁方规则调试信息。",)
         title_font = self.fonts["subtitle"]
         body_font = self.fonts["body"]
+
+        # 创建更小的字体用于显示规则分配详情
+        font_path = self.config.fonts.get("path")
+        small_font_size = max(16, int(self.config.fonts.get("body_size", 28) * 0.75))
+        try:
+            small_font = pygame.font.Font(font_path, small_font_size) if font_path else pygame.font.Font(None, small_font_size)
+        except:
+            small_font = body_font
+
         title = title_font.render("规则分配预览", True, self.colors["text_primary"])
-        title_rect = title.get_rect(center=(self.screen.get_width() / 2, self.screen.get_height() / 2 - int(200 * self.scale)))
+        title_rect = title.get_rect(center=(self.screen.get_width() / 2, int(80 * self.scale)))
         self.screen.blit(title, title_rect)
 
-        line_gap = max(30, int(36 * self.scale))
+        # 使用更小的行间距
+        line_gap = max(22, int(26 * self.scale))
         start_y = title_rect.bottom + int(20 * self.scale)
-        for idx, text in enumerate(lines):
-            surface = body_font.render(text, True, self.colors["text_primary"])
-            rect = surface.get_rect(center=(self.screen.get_width() / 2, start_y + idx * line_gap))
-            self.screen.blit(surface, rect)
+
+        # 分两列显示，如果内容太多
+        max_lines_per_column = 12
+        if len(lines) > max_lines_per_column:
+            # 左列
+            left_x = self.screen.get_width() // 4
+            for idx in range(min(len(lines), max_lines_per_column)):
+                surface = small_font.render(lines[idx], True, self.colors["text_primary"])
+                rect = surface.get_rect(left=left_x, top=start_y + idx * line_gap)
+                self.screen.blit(surface, rect)
+
+            # 右列
+            right_x = self.screen.get_width() * 3 // 4
+            for idx in range(max_lines_per_column, len(lines)):
+                surface = small_font.render(lines[idx], True, self.colors["text_primary"])
+                rect = surface.get_rect(left=right_x, top=start_y + (idx - max_lines_per_column) * line_gap)
+                self.screen.blit(surface, rect)
+        else:
+            # 单列显示
+            for idx, text in enumerate(lines):
+                surface = small_font.render(text, True, self.colors["text_primary"])
+                rect = surface.get_rect(center=(self.screen.get_width() / 2, start_y + idx * line_gap))
+                self.screen.blit(surface, rect)
 
         hint = body_font.render("按 空格 / 回车 开始实验", True, self.colors["accent"])
         hint_rect = hint.get_rect(center=(self.screen.get_width() / 2, self.screen.get_height() - int(120 * self.scale)))
@@ -475,8 +513,13 @@ class ExperimentScene:
             text_bottom = text_rect.bottom
 
         info_font = self.fonts["body"]
+        question_caption_template = self.texts.get("question_caption", "第 {trial} 次 - 题目 {question_order}")
+        caption_text = question_caption_template.format(
+            trial=self.current_trial,
+            question_order=self.current_question_order
+        )
         caption = info_font.render(
-            f"第 {self.current_trial} 次 - 题目 {self.current_question_order}",
+            caption_text,
             True,
             self.colors["text_primary"],
         )
@@ -513,7 +556,7 @@ class ExperimentScene:
 
     def _compose_question_display(self, text: str) -> str:
         symbol = self.current_symbol or self._category_symbol(self.current_category)
-        prefix = f"[{symbol}] " if symbol else ""
+        prefix = f"[{symbol}] " if symbol and self.show_symbols else ""
         subject = self.current_subject_name
         body = f"{subject}{text}" if subject else text
         return f"{prefix}{body}"

@@ -19,6 +19,7 @@ class Slider:
         colors: Tuple[Tuple[int, int, int], Tuple[int, int, int], Tuple[int, int, int]],
         label_color: Tuple[int, int, int],
         scale: float = 1.0,
+        label_medium: str = "",
     ) -> None:
         self.x, self.y = start_pos
         self.length = length
@@ -28,6 +29,7 @@ class Slider:
         self.font = font
         self.label_low = label_low
         self.label_high = label_high
+        self.label_medium = label_medium
         self.track_color, self.handle_color, self.disabled_color = colors
         self.label_color = label_color
         self.scale = max(scale, 0.5)
@@ -48,10 +50,18 @@ class Slider:
 
         text_color = self.label_color if self.enabled else self.disabled_color
         scale_offset_y = int(45 * self.scale)
+        
+        # 绘制左侧和右侧标签
         low_label = self.font.render(self.label_low, True, text_color)
         high_label = self.font.render(self.label_high, True, text_color)
         surface.blit(low_label, (self.x - low_label.get_width() // 2, self.y + scale_offset_y))
         surface.blit(high_label, (self.x + self.length - high_label.get_width() // 2, self.y + scale_offset_y))
+        
+        # 绘制中间标签（如果有的话）
+        if self.label_medium:
+            medium_label = self.font.render(self.label_medium, True, text_color)
+            medium_x = self.x + self.length // 2 - medium_label.get_width() // 2
+            surface.blit(medium_label, (medium_x, self.y + scale_offset_y))
 
         value_offset = int(65 * self.scale)
         format_str = self._get_value_format()
@@ -63,9 +73,13 @@ class Slider:
             tick_height = max(6, int(12 * self.scale))
             tick_thickness = max(1, int(2 * self.scale))
             tick_color = text_color
+            
+            # 绘制刻度线和数值标签
             for i in range(tick_count):
                 tick_value = self.min_value + i * self.step
                 tick_x = int(self._value_to_position(tick_value))
+                
+                # 绘制刻度线
                 pygame.draw.line(
                     surface,
                     tick_color,
@@ -73,6 +87,13 @@ class Slider:
                     (tick_x, self.y + tick_height),
                     tick_thickness,
                 )
+                
+                # 绘制数值标签
+                format_str = self._get_value_format()
+                tick_label = self.font.render(f"{tick_value:{format_str}}", True, text_color)
+                label_x = tick_x - tick_label.get_width() // 2
+                label_y = self.y + tick_height + int(8 * self.scale)
+                surface.blit(tick_label, (label_x, label_y))
 
     def handle_event(self, event: pygame.event.Event) -> None:
         if not self.enabled:

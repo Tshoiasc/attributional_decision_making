@@ -3,13 +3,17 @@
     "width": 1920,
     "height": 1080,
     "title": "内在与外在驱动：决策权衡实验",
-    "fullscreen": true
+    "fullscreen": true,
+    "windows_ime_fix": true,
+    "mac_fullscreen_fix": false,
+    "windows_ime_instructions": "Windows输入法支持说明：程序会自动启动输入法服务并使用兼容模式"
   },
   "rating": {
     "min": 1,
     "max": 7,
     "step": 1,
     "label_low": "完全不道德",
+    "label_medium": "不确定",
     "label_high": "完全道德"
   },
   "timing": {
@@ -22,7 +26,7 @@
   },
   "experiment": {
     "practice_trials": 2,
-    "formal_trials": 10,
+    "formal_trials": 16,
     "export_directory": "data",
     "practice_output": "practice_results.csv",
     "formal_output_prefix": "formal_results"
@@ -70,12 +74,14 @@
     "home_subtitle": [
       "通过模拟道德情境，探究改变主意时内在思考后验与外在证据的协同机制。",
       "请按照引导完成模拟或正式实验。"
-    ]
+    ],
+    "question_caption": "第 {trial} 次 - 题目 {question_order}"
   },
   "display": {
-    "show_timer": true,
-    "show_participant_info": true,
-    "show_debug": true
+    "show_timer": false,
+    "show_participant_info": false,
+    "show_debug": false,
+    "show_question_symbols": false
   },
   "latin_square": {
     "enabled": true,
@@ -87,12 +93,18 @@
       "~": "空题位"
     },
     "rules": [
+      "PP",
       "PN",
+      "PA",
+      "P~",
       "NP",
-      {
-        "code": "A~",
-        "probability": 0.2
-      }
+      "NN",
+      "NA",
+      "N~"
+    ],
+    "stimuli_rules": [
+      "PN",
+      "P~"
     ]
   },
   "pictures_dir": "pictures"
